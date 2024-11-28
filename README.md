@@ -1,5 +1,5 @@
 
-# AI Code Model
+# Polris
 
 A sophisticated transformer-based model for code generation, understanding, and processing. This model is specifically optimized for CPU-based training and includes advanced features like conversation management, efficient tokenization, and memory-optimized training.
 
