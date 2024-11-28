@@ -8,7 +8,7 @@ import numpy as np
 from functools import lru_cache
 
 class EnhancedCodeTokenizer:
-    def __init__(self, vocab_size: int = 32000, model_path: Optional[str] = None):
+    def __init__(self, vocab_size: int = 3500, model_path: Optional[str] = None):  # Reduced from 32000
         self.vocab_size = vocab_size
         self.model_path = model_path
         self.sp_model = None
@@ -54,7 +54,10 @@ class EnhancedCodeTokenizer:
         cleaned_data = []
         for text in text_data:
             if isinstance(text, str) and text.strip():
-                cleaned_data.append(text.strip())
+                # Normalize whitespace and clean the text
+                text = ' '.join(text.split())
+                if len(text) >= 10:  # Skip very short snippets
+                    cleaned_data.append(text)
         
         if not cleaned_data:
             raise ValueError("No valid training data after cleaning")
@@ -65,29 +68,42 @@ class EnhancedCodeTokenizer:
             for text in cleaned_data:
                 f.write(f"{text}\n")
 
-        # Train SentencePiece model
-        model_prefix = str(self.cache_dir / 'code_tokenizer')
-        spm.SentencePieceTrainer.train(
-            input=str(train_path),
-            model_prefix=model_prefix,
-            vocab_size=self.vocab_size - len(self.special_tokens),
-            model_type='bpe',
-            character_coverage=1.0,
-            num_threads=num_threads,
-            split_digits=True,
-            split_by_whitespace=True,
-            max_sentence_length=16384,
-            byte_fallback=True,
-            user_defined_symbols=list(self.special_tokens.values()),
-            pad_id=0,
-            unk_id=1,
-            bos_id=2,
-            eos_id=3
-        )
+        # Calculate actual vocab size accounting for special tokens
+        effective_vocab_size = self.vocab_size - len(self.special_tokens)
+        if effective_vocab_size <= 0:
+            raise ValueError("Vocab size too small to accommodate special tokens")
 
-        self.sp_model = spm.SentencePieceProcessor()
-        self.sp_model.load(f"{model_prefix}.model")
-        self._save_model()
+        # Train SentencePiece model with adjusted parameters
+        model_prefix = str(self.cache_dir / 'code_tokenizer')
+        try:
+            spm.SentencePieceTrainer.train(
+                input=str(train_path),
+                model_prefix=model_prefix,
+                vocab_size=effective_vocab_size,
+                model_type='bpe',
+                character_coverage=0.9995,  # Reduced from 1.0
+                num_threads=num_threads,
+                split_digits=True,
+                split_by_whitespace=True,
+                max_sentence_length=8192,  # Reduced from 16384
+                byte_fallback=True,
+                user_defined_symbols=list(self.special_tokens.values()),
+                pad_id=0,
+                unk_id=1,
+                bos_id=2,
+                eos_id=3,
+                control_symbols=['[PAD]', '[UNK]', '[BOS]', '[EOS]'],
+                input_sentence_size=100000,  # Limit training data size
+                shuffle_input_sentence=True
+            )
+            
+            self.sp_model = spm.SentencePieceProcessor()
+            self.sp_model.load(f"{model_prefix}.model")
+            self._save_model()
+            
+        except Exception as e:
+            logging.error(f"SentencePiece training failed: {str(e)}")
+            raise
 
     @lru_cache(maxsize=100000)
     def encode(self, text: str, add_special_tokens: bool = True) -> List[int]:

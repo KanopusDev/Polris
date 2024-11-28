@@ -261,7 +261,7 @@ if __name__ == "__main__":
         'languages': ['python'],
         'min_stars': 100,
         'max_samples': 10000,  # Limit dataset size for CPU training
-        'vocab_size': 32000,
+        'vocab_size': 3500,  # Reduced from 32000 to comply with SentencePiece limits
         'd_model': 256,  # Reduced model size for CPU
         'nhead': 4,
         'num_layers': 4,
