@@ -51,35 +51,64 @@ class ModelTrainer:
         """Create memory-efficient dataloaders."""
         try:
             # Load data from multiple sources
-            all_code_data = code_loader.load_data(
-                sources=['github', 'codeparrot', 'codenet']
+            all_code_data = code_loader.load_data(sources=['github'])  # Start with just GitHub data
+            
+            if len(all_code_data) == 0:
+                raise ValueError("No code data loaded")
+                
+            # Convert strings to tensors
+            processed_data = []
+            for code in all_code_data:
+                try:
+                    # Truncate long sequences and ensure string type
+                    code = str(code)[:512] if code else ""  # Limit sequence length
+                    if not code.strip():
+                        continue
+                        
+                    # Tokenize and convert to tensor
+                    tokens = tokenizer.encode(code)
+                    if tokens and len(tokens) > 1:  # Ensure we have valid tokens
+                        processed_data.append(tokens)
+                except Exception as e:
+                    logging.warning(f"Failed to process code sample: {str(e)}")
+                    continue
+            
+            if len(processed_data) == 0:
+                raise ValueError("No valid processed data available")
+                
+            # Create train/val split
+            train_size = int(0.9 * len(processed_data))
+            train_data = processed_data[:train_size]
+            val_data = processed_data[train_size:]
+            
+            # Create tensor datasets
+            train_dataset = torch.utils.data.TensorDataset(
+                torch.nn.utils.rnn.pad_sequence(
+                    [torch.tensor(x, dtype=torch.long) for x in train_data],
+                    batch_first=True
+                )
             )
             
-            # Subsample if needed
-            if len(all_code_data) > self.config['max_samples']:
-                all_code_data = np.random.choice(
-                    all_code_data, 
-                    size=self.config['max_samples'], 
-                    replace=False
-                ).tolist()
-            
-            # Create train/val split
-            train_size = int(0.9 * len(all_code_data))
-            train_data = all_code_data[:train_size]
-            val_data = all_code_data[train_size:]
+            val_dataset = torch.utils.data.TensorDataset(
+                torch.nn.utils.rnn.pad_sequence(
+                    [torch.tensor(x, dtype=torch.long) for x in val_data],
+                    batch_first=True
+                )
+            )
             
             # Create dataloaders
             train_loader = DataLoader(
-                train_data,
-                batch_size=self.config['batch_size'],
-                sampler=RandomSampler(train_data),
+                train_dataset,
+                batch_size=min(self.config['batch_size'], len(train_dataset)),
+                shuffle=True,
                 num_workers=2,
                 pin_memory=False
             )
             
             val_loader = DataLoader(
-                val_data,
-                batch_size=self.config['batch_size'],
+                val_dataset,
+                batch_size=min(self.config['batch_size'], len(val_dataset)),
+                shuffle=False,
                 num_workers=1,
                 pin_memory=False
             )
@@ -169,11 +198,19 @@ class ModelTrainer:
     
     def process_batch(self, model, batch):
         """Process batch with memory-efficient handling."""
-        outputs = model(batch)
+        # Unpack batch tensor
+        inputs = batch[0]
+        targets = inputs[:, 1:]  # Use shifted input as targets
+        inputs = inputs[:, :-1]  # Remove last token from inputs
+        
+        # Forward pass
+        outputs = model(inputs)
+        
+        # Compute loss
         loss = torch.nn.functional.cross_entropy(
             outputs.view(-1, outputs.size(-1)),
-            batch.view(-1),
-            reduction='mean'
+            targets.view(-1),
+            ignore_index=self.tokenizer.pad_token_id
         )
         return loss
     
