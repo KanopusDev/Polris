@@ -117,30 +117,42 @@ class CodeDataLoader:
         return []
 
     def _validate_code_quality(self, code: str) -> bool:
-        """Validate code quality before including in dataset."""
+        """Validate code quality with stricter criteria."""
         try:
-            if len(code.strip()) < 50:  # Skip very short snippets
+            if not isinstance(code, str) or len(code.strip()) < 100:  # Increased minimum length
                 return False
-                
+            
+            lines = code.split('\n')
+            if len(lines) < 5:  # Require at least 5 lines
+                return False
+            
             # Check for common code quality indicators
             quality_indicators = [
-                'def ',  # Has function definitions
-                'class ',  # Has class definitions
-                '"""',  # Has docstrings
-                'import ',  # Has imports
-                'return '  # Has return statements
+                'def ',      # Has function definitions
+                'class ',    # Has class definitions
+                'import ',   # Has imports
+                '    ',      # Has proper indentation
+                '"""',       # Has docstrings
+                'return ',   # Has return statements
+                '(',         # Has function calls or definitions
+                ':'         # Has control structures
             ]
             
-            if not any(indicator in code for indicator in quality_indicators):
+            # Require at least 3 quality indicators
+            matches = sum(1 for indicator in quality_indicators if indicator in code)
+            if matches < 3:
                 return False
-                
-            # Check for proper indentation
-            lines = code.split('\n')
-            if not any(line.startswith('    ') for line in lines):
+            
+            # Check for proper indentation structure
+            has_structure = False
+            for line in lines:
+                if line.startswith('    '):
+                    has_structure = True
+                    break
+            
+            if not has_structure:
                 return False
-                
-            # Additional code quality checks can be added here
-                
+            
             return True
             
         except Exception:
@@ -220,6 +232,7 @@ class CodeDataLoader:
         return repos
 
     def fetch_code_content(self, repos: List[Dict]) -> List[str]:
+        """Fetch code content from repositories with better error handling."""
         code_data = []
         with ThreadPoolExecutor(max_workers=10) as executor:
             futures = []
@@ -230,14 +243,28 @@ class CodeDataLoader:
             
             for future in tqdm(futures, desc="Fetching code content"):
                 result = future.result()
-                if result:  # Only extend if we got data
+                if result:
                     code_data.extend(result)
+                    if len(code_data) >= 1000:  # Limit to prevent memory issues
+                        break
                     
+        if not code_data:
+            self.logger.warning("No code content found, trying recursive fetch")
+            for repo in repos[:5]:  # Try first 5 repos recursively
+                files = self._fetch_repo_contents_recursive(repo['full_name'])
+                code_data.extend(files)
+        
         if not code_data:
             raise ValueError("No code content found in any repository")
         
-        logging.info(f"Successfully fetched {len(code_data)} code files")
-        return code_data
+        # Filter and clean code data
+        valid_code = []
+        for code in code_data:
+            if self._validate_code_quality(code) and len(code.strip()) >= 100:
+                valid_code.append(code)
+                
+        self.logger.info(f"Successfully fetched {len(valid_code)} valid code files")
+        return valid_code
 
     def _fetch_repo_contents(self, repo_name: str) -> List[str]:
         contents_url = f"{self.base_url}/repos/{repo_name}/contents"
@@ -249,6 +276,35 @@ class CodeDataLoader:
         except Exception as e:
             logging.error(f"Error fetching {repo_name}: {str(e)}")
             return []
+
+    def _fetch_repo_contents_recursive(self, repo_name: str, path: str = '') -> List[str]:
+        """Recursively fetch repository contents."""
+        contents_url = f"{self.base_url}/repos/{repo_name}/contents/{path}"
+        code_files = []
+        
+        try:
+            response = requests.get(contents_url, headers=self.headers)
+            response.raise_for_status()
+            items = response.json()
+            
+            # Handle single file response
+            if not isinstance(items, list):
+                items = [items]
+            
+            for item in items:
+                if item['type'] == 'file' and self._is_valid_file(item):
+                    content = self._get_file_content(item['download_url'])
+                    if content:
+                        code_files.append(content)
+                elif item['type'] == 'dir':
+                    code_files.extend(
+                        self._fetch_repo_contents_recursive(repo_name, item['path'])
+                    )
+                    
+        except Exception as e:
+            self.logger.error(f"Error in recursive fetch for {repo_name}/{path}: {str(e)}")
+            
+        return code_files
 
     def _is_valid_file(self, file_info: Dict) -> bool:
         return (file_info['type'] == 'file' and 

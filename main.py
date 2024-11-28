@@ -48,40 +48,35 @@ class ModelTrainer:
         torch.set_num_threads(psutil.cpu_count() // 2)  # Use half of available cores
         
     def create_dataloaders(self, code_loader: CodeDataLoader, tokenizer: EnhancedCodeTokenizer):
-        """Create memory-efficient dataloaders."""
+        """Create memory-efficient dataloaders with better error handling."""
         try:
             # Load and process data
             all_code_data = code_loader.load_data(sources=['github'])
             
-            if not all_code_data:
-                raise ValueError("No code data loaded")
-                
-            # Process data in batches to avoid memory issues
+            if len(all_code_data) < 2:  # Need at least 2 samples for train/val split
+                raise ValueError(f"Insufficient data: only {len(all_code_data)} samples found")
+            
+            # Process data in batches
             processed_data = []
-            batch_size = 100  # Process in smaller batches
-            
-            for i in range(0, len(all_code_data), batch_size):
-                batch = all_code_data[i:i + batch_size]
-                for code in batch:
-                    try:
-                        if not isinstance(code, str) or not code.strip():
-                            continue
-                            
-                        # Truncate long sequences
-                        code = code[:4096]  # Increased max length for code
-                        
-                        # Tokenize
-                        tokens = tokenizer.encode(code, add_special_tokens=True)
-                        if tokens and len(tokens) > 1:
-                            processed_data.append(tokens)
-                            
-                    except Exception as e:
-                        logging.warning(f"Failed to process code sample: {str(e)}")
+            for code in all_code_data:
+                try:
+                    # Normalize and clean code
+                    code = str(code).strip()
+                    if len(code) < 10:
                         continue
+                    
+                    # Tokenize with length check
+                    tokens = tokenizer.encode(code, add_special_tokens=True)
+                    if len(tokens) > 1 and len(tokens) <= 2048:  # Add length limit
+                        processed_data.append(tokens)
+                        
+                except Exception as e:
+                    logging.warning(f"Failed to process code sample: {str(e)}")
+                    continue
             
-            if not processed_data:
-                raise ValueError("No valid processed data available")
-                
+            if len(processed_data) < 2:
+                raise ValueError(f"No valid processed data available. Only {len(processed_data)} samples after processing")
+            
             # Create train/val split
             train_size = int(0.9 * len(processed_data))
             train_data = processed_data[:train_size]
