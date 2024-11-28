@@ -11,7 +11,7 @@ import numpy as np
 from torch.utils.data import DataLoader, RandomSampler
 from models.transformer import EnhancedCodeTransformer
 from models.tokenizer import EnhancedCodeTokenizer
-from data.data_loader import GitHubDataLoader
+from data.data_loader import GitHubDataLoader, CodeDataLoader
 from models.conversation_manager import ConversationManager
 from dotenv import load_dotenv
 
@@ -47,67 +47,48 @@ class ModelTrainer:
         # Set number of threads based on available CPU cores
         torch.set_num_threads(psutil.cpu_count() // 2)  # Use half of available cores
         
-    def create_dataloaders(self, github_loader: GitHubDataLoader, tokenizer: EnhancedCodeTokenizer):
+    def create_dataloaders(self, code_loader: CodeDataLoader, tokenizer: EnhancedCodeTokenizer):
         """Create memory-efficient dataloaders."""
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                # Fetch data in chunks to manage memory
-                repos = github_loader.fetch_repositories(min_stars=self.config['min_stars'])
-                
-                if not repos:
-                    raise ValueError("No repositories found")
-                
-                chunk_size = 100  # Process repositories in chunks
-                all_code_data = []
-                
-                for i in range(0, len(repos), chunk_size):
-                    chunk_repos = repos[i:i + chunk_size]
-                    code_data = github_loader.fetch_code_content(chunk_repos)
-                    if code_data:  # Only extend if we got data
-                        all_code_data.extend(code_data)
-                    
-                    # Clear memory after processing each chunk
-                    if len(all_code_data) > self.config['max_samples']:
-                        logging.info(f"Reached max samples limit: {self.config['max_samples']}")
-                        break
-                
-                if not all_code_data:
-                    raise ValueError("No code data collected")
-                
-                logging.info(f"Successfully collected {len(all_code_data)} code samples")
-                
-                # Create efficient dataloaders
-                train_size = int(0.9 * len(all_code_data))
-                train_data = all_code_data[:train_size]
-                val_data = all_code_data[train_size:]
-                
-                if not train_data or not val_data:
-                    raise ValueError("Insufficient data for training/validation split")
-                
-                # Use smaller batch sizes for CPU training
-                train_loader = DataLoader(
-                    train_data,
-                    batch_size=self.config['batch_size'],
-                    sampler=RandomSampler(train_data, replacement=False),
-                    num_workers=2,
-                    pin_memory=False
-                )
-                
-                val_loader = DataLoader(
-                    val_data,
-                    batch_size=self.config['batch_size'],
-                    num_workers=1,
-                    pin_memory=False
-                )
-                
-                return train_loader, val_loader
-                
-            except Exception as e:
-                logging.error(f"Attempt {attempt + 1}/{max_retries} failed: {str(e)}")
-                if attempt == max_retries - 1:
-                    raise ValueError(f"Failed to load data after {max_retries} attempts")
-                continue
+        try:
+            # Load data from multiple sources
+            all_code_data = code_loader.load_data(
+                sources=['github', 'codeparrot', 'codenet']
+            )
+            
+            # Subsample if needed
+            if len(all_code_data) > self.config['max_samples']:
+                all_code_data = np.random.choice(
+                    all_code_data, 
+                    size=self.config['max_samples'], 
+                    replace=False
+                ).tolist()
+            
+            # Create train/val split
+            train_size = int(0.9 * len(all_code_data))
+            train_data = all_code_data[:train_size]
+            val_data = all_code_data[train_size:]
+            
+            # Create dataloaders
+            train_loader = DataLoader(
+                train_data,
+                batch_size=self.config['batch_size'],
+                sampler=RandomSampler(train_data),
+                num_workers=2,
+                pin_memory=False
+            )
+            
+            val_loader = DataLoader(
+                val_data,
+                batch_size=self.config['batch_size'],
+                num_workers=1,
+                pin_memory=False
+            )
+            
+            return train_loader, val_loader
+            
+        except Exception as e:
+            logging.error(f"Error creating dataloaders: {str(e)}")
+            raise
 
     def train(self):
         """Main training loop with memory-efficient processing."""
@@ -128,13 +109,13 @@ class ModelTrainer:
         model = model.cpu()
         model = torch.jit.script(model)  # Use TorchScript for better CPU performance
         
-        # Initialize data loading
-        github_loader = GitHubDataLoader(
+        # Initialize data loading with multiple sources
+        code_loader = CodeDataLoader(
             token=self.config['github_token'],
             languages=self.config['languages']
         )
         
-        train_loader, val_loader = self.create_dataloaders(github_loader, tokenizer)
+        train_loader, val_loader = self.create_dataloaders(code_loader, tokenizer)
         
         # Initialize optimizer with CPU-specific settings
         optimizer = torch.optim.AdamW(

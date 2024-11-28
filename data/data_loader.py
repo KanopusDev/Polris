@@ -1,17 +1,89 @@
 import requests
-from typing import List, Dict
-import base64
+from typing import List, Dict, Union
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
+from datasets import load_dataset
+import json
 
-class GitHubDataLoader:
-    def __init__(self, token: str, languages: List[str] = ['python']):
-        self.headers = {'Authorization': f'token {token}'}
+class CodeDataLoader:
+    def __init__(self, token: str = None, languages: List[str] = ['python']):
+        self.headers = {'Authorization': f'token {token}'} if token else {}
         self.languages = languages
         self.base_url = "https://api.github.com"
-        logging.basicConfig(level=logging.INFO)
+        self._setup_logging()
         
+    def _setup_logging(self):
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+        self.logger = logging.getLogger(__name__)
+
+    def load_data(self, sources: List[str] = ['github', 'codeparrot', 'codenet']) -> List[str]:
+        """Load code data from multiple sources."""
+        all_code_data = []
+        
+        for source in sources:
+            try:
+                if source == 'github':
+                    data = self._load_github_data()
+                elif source == 'codeparrot':
+                    data = self._load_codeparrot_data()
+                elif source == 'codenet':
+                    data = self._load_codenet_data()
+                else:
+                    self.logger.warning(f"Unknown source: {source}")
+                    continue
+                
+                all_code_data.extend(data)
+                self.logger.info(f"Loaded {len(data)} samples from {source}")
+                
+            except Exception as e:
+                self.logger.error(f"Error loading data from {source}: {str(e)}")
+                continue
+        
+        if not all_code_data:
+            raise ValueError("No data could be loaded from any source")
+        
+        self.logger.info(f"Total samples collected: {len(all_code_data)}")
+        return all_code_data
+
+    def _load_github_data(self) -> List[str]:
+        """Load data from GitHub."""
+        repos = self.fetch_repositories()
+        return self.fetch_code_content(repos)
+        
+    def _load_codeparrot_data(self, subset_size: int = 5000) -> List[str]:
+        """Load data from CodeParrot dataset."""
+        try:
+            dataset = load_dataset("codeparrot/codeparrot-clean", split="train[:10000]")
+            code_samples = [
+                sample['content'] 
+                for sample in dataset 
+                if any(lang in sample.get('lang', '').lower() 
+                      for lang in self.languages)
+            ][:subset_size]
+            return code_samples
+        except Exception as e:
+            self.logger.error(f"Error loading CodeParrot data: {str(e)}")
+            return []
+
+    def _load_codenet_data(self, subset_size: int = 5000) -> List[str]:
+        """Load data from Project CodeNet dataset."""
+        try:
+            dataset = load_dataset("codenet", split="train[:10000]")
+            code_samples = [
+                sample['code'] 
+                for sample in dataset 
+                if any(lang in sample.get('language', '').lower() 
+                      for lang in self.languages)
+            ][:subset_size]
+            return code_samples
+        except Exception as e:
+            self.logger.error(f"Error loading CodeNet data: {str(e)}")
+            return []
+
     def fetch_repositories(self, min_stars: int = 100) -> List[Dict]:
         repos = []
         for lang in self.languages:
