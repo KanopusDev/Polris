@@ -13,10 +13,10 @@ class EnhancedCodeTokenizer:
         self.model_path = model_path
         self.sp_model = None
         self.special_tokens = {
-            'PAD': '[PAD]',
-            'UNK': '[UNK]',
-            'BOS': '[BOS]',
-            'EOS': '[EOS]',
+            'PAD': '<pad>',  # Changed from [PAD] to match SentencePiece defaults
+            'UNK': '<unk>',  # Changed from [UNK] to match SentencePiece defaults
+            'BOS': '<s>',    # Changed from [BOS] to match SentencePiece defaults
+            'EOS': '</s>',   # Changed from [EOS] to match SentencePiece defaults
             'MASK': '[MASK]',
             'SEP': '[SEP]',
             # Language-specific tokens
@@ -51,14 +51,7 @@ class EnhancedCodeTokenizer:
         logging.info(f"Training tokenizer on {len(text_data)} samples")
         
         # Clean and filter data
-        cleaned_data = []
-        for text in text_data:
-            if isinstance(text, str) and text.strip():
-                # Normalize whitespace and clean the text
-                text = ' '.join(text.split())
-                if len(text) >= 10:  # Skip very short snippets
-                    cleaned_data.append(text)
-        
+        cleaned_data = [text.strip() for text in text_data if isinstance(text, str) and text.strip()]
         if not cleaned_data:
             raise ValueError("No valid training data after cleaning")
         
@@ -72,6 +65,12 @@ class EnhancedCodeTokenizer:
         effective_vocab_size = self.vocab_size - len(self.special_tokens)
         if effective_vocab_size <= 0:
             raise ValueError("Vocab size too small to accommodate special tokens")
+
+        # Get user-defined symbols (excluding default SentencePiece special tokens)
+        user_symbols = [
+            token for key, token in self.special_tokens.items()
+            if key not in ['PAD', 'UNK', 'BOS', 'EOS']
+        ]
 
         # Train SentencePiece model with adjusted parameters
         model_prefix = str(self.cache_dir / 'code_tokenizer')
@@ -87,12 +86,11 @@ class EnhancedCodeTokenizer:
                 split_by_whitespace=True,
                 max_sentence_length=8192,  # Reduced from 16384
                 byte_fallback=True,
-                user_defined_symbols=list(self.special_tokens.values()),
+                user_defined_symbols=user_symbols,  # Only include custom tokens
                 pad_id=0,
                 unk_id=1,
                 bos_id=2,
                 eos_id=3,
-                control_symbols=['[PAD]', '[UNK]', '[BOS]', '[EOS]'],
                 input_sentence_size=100000,  # Limit training data size
                 shuffle_input_sentence=True
             )
