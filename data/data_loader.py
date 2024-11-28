@@ -162,8 +162,8 @@ class CodeDataLoader:
         """Fetch high-quality repositories based on strict criteria."""
         repos = []
         for lang in self.languages:
-            # Fix query syntax by using proper GitHub search syntax
-            query = f"language:{lang} stars:>={min_stars} is:public archived:false fork:false"
+            # Reduce initial criteria to get more repos
+            query = f"language:{lang} stars:>=10 is:public fork:false"
             
             try:
                 headers = {
@@ -171,39 +171,37 @@ class CodeDataLoader:
                     'Accept': 'application/vnd.github.v3+json'
                 }
                 
-                response = requests.get(
-                    f"{self.base_url}/search/repositories",
-                    params={
-                        'q': query,
-                        'sort': 'stars',
-                        'order': 'desc',
-                        'per_page': 100
-                    },
-                    headers=headers
-                )
-                response.raise_for_status()
-                data = response.json()
-                
-                if 'items' in data:
-                    # Relax criteria to ensure we get some results
-                    quality_repos = [
-                        repo for repo in data['items']
-                        if (repo.get('watchers_count', 0) >= 100 and  # Reduced from 500
-                            not repo.get('fork', True) and
-                            repo.get('size', 0) > 100)  # Reduced from 1000
-                    ]
-                    repos.extend(quality_repos)
+                # Make multiple requests to get more repositories
+                for page in range(1, 6):  # Get up to 500 repos (5 pages * 100 per page)
+                    response = requests.get(
+                        f"{self.base_url}/search/repositories",
+                        params={
+                            'q': query,
+                            'sort': 'stars',
+                            'order': 'desc',
+                            'per_page': 100,
+                            'page': page
+                        },
+                        headers=headers
+                    )
+                    response.raise_for_status()
+                    data = response.json()
                     
-                self.logger.info(f"Found {len(quality_repos)} quality repositories for {lang}")
+                    if 'items' in data:
+                        repos.extend([
+                            repo for repo in data['items']
+                            if repo.get('size', 0) > 50  # Reduced size threshold
+                        ])
+                        
+                    self.logger.info(f"Found {len(repos)} repositories so far for {lang}")
                     
+                    if len(repos) >= 200:  # Stop if we have enough repos
+                        break
+                        
             except Exception as e:
                 self.logger.error(f"Error fetching repositories for {lang}: {str(e)}")
                 continue
-                
-        if not repos:
-            self.logger.warning("No repositories found with strict criteria, falling back to basic search")
-            return self._fallback_repository_search()
-            
+        
         return repos
 
     def _fallback_repository_search(self) -> List[Dict]:
@@ -234,37 +232,34 @@ class CodeDataLoader:
     def fetch_code_content(self, repos: List[Dict]) -> List[str]:
         """Fetch code content from repositories with better error handling."""
         code_data = []
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        
+        # Process repos in parallel with progress bar
+        with ThreadPoolExecutor(max_workers=5) as executor:
             futures = []
             for repo in repos:
                 futures.append(
-                    executor.submit(self._fetch_repo_contents, repo['full_name'])
+                    executor.submit(self._fetch_repo_contents_recursive, 
+                                  repo['full_name'], '', 0)
                 )
             
             for future in tqdm(futures, desc="Fetching code content"):
-                result = future.result()
-                if result:
-                    code_data.extend(result)
-                    if len(code_data) >= 1000:  # Limit to prevent memory issues
-                        break
-                    
-        if not code_data:
-            self.logger.warning("No code content found, trying recursive fetch")
-            for repo in repos[:5]:  # Try first 5 repos recursively
-                files = self._fetch_repo_contents_recursive(repo['full_name'])
-                code_data.extend(files)
-        
-        if not code_data:
-            raise ValueError("No code content found in any repository")
-        
-        # Filter and clean code data
-        valid_code = []
-        for code in code_data:
-            if self._validate_code_quality(code) and len(code.strip()) >= 100:
-                valid_code.append(code)
+                try:
+                    result = future.result(timeout=60)  # Add timeout
+                    if result:
+                        code_data.extend(result)
+                        self.logger.info(f"Current code samples: {len(code_data)}")
+                except Exception as e:
+                    self.logger.warning(f"Error processing repository: {str(e)}")
+                    continue
                 
-        self.logger.info(f"Successfully fetched {len(valid_code)} valid code files")
-        return valid_code
+                if len(code_data) >= 1000:  # Stop if we have enough samples
+                    break
+        
+        if len(code_data) < 2:
+            raise ValueError(f"Insufficient code samples found: {len(code_data)}")
+            
+        self.logger.info(f"Successfully fetched {len(code_data)} code files")
+        return code_data
 
     def _fetch_repo_contents(self, repo_name: str) -> List[str]:
         contents_url = f"{self.base_url}/repos/{repo_name}/contents"
@@ -277,8 +272,11 @@ class CodeDataLoader:
             logging.error(f"Error fetching {repo_name}: {str(e)}")
             return []
 
-    def _fetch_repo_contents_recursive(self, repo_name: str, path: str = '') -> List[str]:
-        """Recursively fetch repository contents."""
+    def _fetch_repo_contents_recursive(self, repo_name: str, path: str = '', depth: int = 0) -> List[str]:
+        """Recursively fetch repository contents with depth limit."""
+        if depth > 3:  # Limit recursion depth
+            return []
+            
         contents_url = f"{self.base_url}/repos/{repo_name}/contents/{path}"
         code_files = []
         
@@ -292,14 +290,23 @@ class CodeDataLoader:
                 items = [items]
             
             for item in items:
-                if item['type'] == 'file' and self._is_valid_file(item):
-                    content = self._get_file_content(item['download_url'])
-                    if content:
-                        code_files.append(content)
-                elif item['type'] == 'dir':
-                    code_files.extend(
-                        self._fetch_repo_contents_recursive(repo_name, item['path'])
-                    )
+                try:
+                    if item['type'] == 'file' and self._is_valid_file(item):
+                        content = self._get_file_content(item['download_url'])
+                        if content and self._validate_code_quality(content):
+                            code_files.append(content)
+                    elif item['type'] == 'dir' and depth < 3:  # Only recurse if not too deep
+                        code_files.extend(
+                            self._fetch_repo_contents_recursive(
+                                repo_name, item['path'], depth + 1
+                            )
+                        )
+                except Exception as e:
+                    self.logger.warning(f"Error processing item in {repo_name}: {str(e)}")
+                    continue
+                    
+                if len(code_files) >= 50:  # Limit files per repository
+                    break
                     
         except Exception as e:
             self.logger.error(f"Error in recursive fetch for {repo_name}/{path}: {str(e)}")
