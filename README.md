@@ -173,7 +173,7 @@ ai-code-model/
 
 ## 📝 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the Canopus Development Software License Agreement - see the LICENSE file for details.
 
 ## ⚠️ Important Notes
 
