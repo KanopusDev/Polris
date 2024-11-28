@@ -1,5 +1,4 @@
 
-Canopus Development Software License Agreement
 Version 1.0
 Effective Date: 28/11/2024
 

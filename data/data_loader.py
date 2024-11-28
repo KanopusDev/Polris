@@ -1,4 +1,3 @@
-
 import requests
 from typing import List, Dict
 import base64
@@ -18,8 +17,20 @@ class GitHubDataLoader:
         for lang in self.languages:
             query = f"language:{lang} stars:>={min_stars}"
             url = f"{self.base_url}/search/repositories?q={query}&sort=stars"
-            response = requests.get(url, headers=self.headers)
-            repos.extend(response.json()['items'])
+            try:
+                response = requests.get(url, headers=self.headers)
+                response.raise_for_status()  # Raise exception for bad status codes
+                data = response.json()
+                if 'items' not in data:
+                    logging.error(f"No 'items' found in response for {lang}: {data}")
+                    continue
+                repos.extend(data['items'])
+                logging.info(f"Found {len(data['items'])} repositories for {lang}")
+            except Exception as e:
+                logging.error(f"Error fetching repositories for {lang}: {str(e)}")
+        
+        if not repos:
+            raise ValueError("No repositories found. Check your GitHub token and rate limits.")
         return repos
 
     def fetch_code_content(self, repos: List[Dict]) -> List[str]:
@@ -30,8 +41,16 @@ class GitHubDataLoader:
                 futures.append(
                     executor.submit(self._fetch_repo_contents, repo['full_name'])
                 )
-            for future in tqdm(futures):
-                code_data.extend(future.result())
+            
+            for future in tqdm(futures, desc="Fetching code content"):
+                result = future.result()
+                if result:  # Only extend if we got data
+                    code_data.extend(result)
+                    
+        if not code_data:
+            raise ValueError("No code content found in any repository")
+        
+        logging.info(f"Successfully fetched {len(code_data)} code files")
         return code_data
 
     def _fetch_repo_contents(self, repo_name: str) -> List[str]:
