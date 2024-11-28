@@ -11,4 +11,4 @@ sentencepiece
 datasets
 requests
 pandas
-sklearn
+scikit-learn
