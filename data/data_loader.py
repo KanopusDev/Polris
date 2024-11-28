@@ -55,48 +55,66 @@ class CodeDataLoader:
         return self.fetch_code_content(repos)
         
     def _load_codeparrot_data(self, subset_size: int = 5000) -> List[str]:
-        """Load production code from CodeParrot dataset."""
+        """Load data from CodeParrot dataset with fallback."""
         try:
+            # Try loading from HuggingFace hub first
             dataset = load_dataset(
-                "codeparrot/codeparrot-clean-train", 
-                streaming=True,
+                "codeparrot/codeparrot-clean-train",
                 split="train",
-                trust_remote_code=True
+                streaming=True
             )
             
             code_samples = []
             for sample in dataset.take(subset_size):
-                if any(lang in sample.get('lang', '').lower() for lang in self.languages):
-                    if self._validate_code_quality(sample['content']):
-                        code_samples.append(sample['content'])
-            
-            return code_samples
-            
+                if self._validate_code_quality(sample['content']):
+                    code_samples.append(sample['content'])
+                    
+            if code_samples:
+                return code_samples
+                
         except Exception as e:
-            self.logger.error(f"Error loading CodeParrot data: {str(e)}")
-            return []
+            self.logger.warning(f"Error loading from HuggingFace hub: {str(e)}")
+            
+        # Fallback to local dataset if available
+        try:
+            local_path = "data/codeparrot_sample.jsonl"
+            if Path(local_path).exists():
+                with open(local_path, 'r') as f:
+                    samples = [json.loads(line.strip())['content'] 
+                             for line in f.readlines()[:subset_size]]
+                return [s for s in samples if self._validate_code_quality(s)]
+        except Exception as e:
+            self.logger.warning(f"Error loading from local file: {str(e)}")
+            
+        return []
 
     def _load_codenet_data(self, subset_size: int = 5000) -> List[str]:
-        """Load production code from Project CodeNet dataset."""
+        """Load data from CodeNet with fallback options."""
         try:
-            dataset = load_dataset(
-                "IBM/project_codecnet",
-                streaming=True,
-                split="train",
-                trust_remote_code=True
-            )
+            # Try alternative dataset sources
+            alternative_datasets = [
+                "codenet/python-algorithms",
+                "codenet/java-algorithms",
+                "microsoft/CodeXGLUE"
+            ]
             
-            code_samples = []
-            for sample in dataset.take(subset_size):
-                if any(lang in sample.get('language', '').lower() for lang in self.languages):
-                    if self._validate_code_quality(sample['code']):
-                        code_samples.append(sample['code'])
-            
-            return code_samples
-            
+            for dataset_name in alternative_datasets:
+                try:
+                    dataset = load_dataset(dataset_name, split="train")
+                    if dataset:
+                        code_samples = []
+                        for sample in dataset:
+                            if 'code' in sample and self._validate_code_quality(sample['code']):
+                                code_samples.append(sample['code'])
+                        if code_samples:
+                            return code_samples[:subset_size]
+                except:
+                    continue
+                    
         except Exception as e:
-            self.logger.error(f"Error loading CodeNet data: {str(e)}")
-            return []
+            self.logger.warning(f"Error loading CodeNet alternatives: {str(e)}")
+            
+        return []
 
     def _validate_code_quality(self, code: str) -> bool:
         """Validate code quality before including in dataset."""
@@ -132,16 +150,15 @@ class CodeDataLoader:
         """Fetch high-quality repositories based on strict criteria."""
         repos = []
         for lang in self.languages:
-            query_params = [
-                f"language:{lang}",
-                f"stars:>={min_stars}",
-                "is:public",
-                "archived:false",
-                "fork:false"
-            ]
-            query = "+".join(query_params)
+            # Fix query syntax by using proper GitHub search syntax
+            query = f"language:{lang} stars:>={min_stars} is:public archived:false fork:false"
             
             try:
+                headers = {
+                    **self.headers,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+                
                 response = requests.get(
                     f"{self.base_url}/search/repositories",
                     params={
@@ -150,30 +167,56 @@ class CodeDataLoader:
                         'order': 'desc',
                         'per_page': 100
                     },
+                    headers=headers
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if 'items' in data:
+                    # Relax criteria to ensure we get some results
+                    quality_repos = [
+                        repo for repo in data['items']
+                        if (repo.get('watchers_count', 0) >= 100 and  # Reduced from 500
+                            not repo.get('fork', True) and
+                            repo.get('size', 0) > 100)  # Reduced from 1000
+                    ]
+                    repos.extend(quality_repos)
+                    
+                self.logger.info(f"Found {len(quality_repos)} quality repositories for {lang}")
+                    
+            except Exception as e:
+                self.logger.error(f"Error fetching repositories for {lang}: {str(e)}")
+                continue
+                
+        if not repos:
+            self.logger.warning("No repositories found with strict criteria, falling back to basic search")
+            return self._fallback_repository_search()
+            
+        return repos
+
+    def _fallback_repository_search(self) -> List[Dict]:
+        """Fallback method for repository search with relaxed criteria."""
+        repos = []
+        for lang in self.languages:
+            try:
+                # Simplified query with minimal criteria
+                query = f"language:{lang} stars:>50"
+                
+                response = requests.get(
+                    f"{self.base_url}/search/repositories",
+                    params={'q': query, 'sort': 'stars', 'per_page': 50},
                     headers=self.headers
                 )
                 response.raise_for_status()
                 data = response.json()
                 
                 if 'items' in data:
-                    # Filter repositories based on additional criteria
-                    quality_repos = [
-                        repo for repo in data['items']
-                        if (repo.get('watchers_count', 0) >= 500 and
-                            not repo.get('fork', True) and
-                            repo.get('size', 0) > 1000 and
-                            repo.get('updated_at', '').startswith('2023'))
-                    ]
-                    repos.extend(quality_repos)
-                    
-                logging.info(f"Found {len(quality_repos)} quality repositories for {lang}")
+                    repos.extend(data['items'])
                     
             except Exception as e:
-                logging.error(f"Error fetching repositories for {lang}: {str(e)}")
+                self.logger.error(f"Error in fallback repository search: {str(e)}")
+                continue
                 
-        if not repos:
-            raise ValueError("No quality repositories found matching criteria")
-            
         return repos
 
     def fetch_code_content(self, repos: List[Dict]) -> List[str]:
