@@ -1,20 +1,151 @@
-
-from typing import Dict, List
 import torch
 import numpy as np
-from torch.utils.data import DataLoader
-from sklearn.metrics import classification_report
+from typing import Dict, List, Optional
 import ast
 import logging
+import radon.metrics as metrics
+from radon.visitors import ComplexityVisitor
 from concurrent.futures import ThreadPoolExecutor
+from torch.utils.data import DataLoader
+from transformers import AutoTokenizer, AutoModel
+import pandas as pd
+from sklearn.metrics import precision_recall_fscore_support
 
 class CodeModelEvaluator:
-    def __init__(self, model, tokenizer, device='cpu'):
+    def __init__(self, model, tokenizer, device='cpu', reference_model_name='microsoft/codebert-base'):
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
-        self.metrics = {}
+        # Initialize CodeBERT for semantic similarity
+        self.reference_model = AutoModel.from_pretrained(reference_model_name).to(device)
+        self.reference_tokenizer = AutoTokenizer.from_pretrained(reference_model_name)
+        self.setup_logging()
+
+    def setup_logging(self):
+        self.logger = logging.getLogger(__name__)
+        handler = logging.FileHandler('evaluation.log')
+        handler.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        ))
+        self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
+
+    def evaluate(self, test_dataloader: DataLoader) -> Dict[str, float]:
+        """Comprehensive model evaluation."""
+        metrics = {
+            'generation': self.evaluate_code_generation(test_dataloader),
+            'quality': self.evaluate_code_quality(test_dataloader),
+            'performance': self.evaluate_model_performance(test_dataloader)
+        }
         
+        # Log evaluation results
+        self.logger.info("Evaluation Results:")
+        for category, results in metrics.items():
+            self.logger.info(f"{category}: {results}")
+            
+        return metrics
+
+    def evaluate_code_generation(self, dataloader: DataLoader) -> Dict[str, float]:
+        """Evaluate code generation capabilities."""
+        self.model.eval()
+        metrics = {
+            'syntactic_validity': [],
+            'semantic_similarity': [],
+            'complexity_match': [],
+            'style_consistency': []
+        }
+        
+        with torch.no_grad(), ThreadPoolExecutor(max_workers=4) as executor:
+            for batch in dataloader:
+                # Generate code
+                inputs = batch['input_ids'].to(self.device)
+                generated = self.model.generate(
+                    inputs,
+                    max_length=512,
+                    num_return_sequences=1,
+                    temperature=0.7,
+                    top_p=0.95
+                )
+                
+                # Evaluate each generated sample
+                futures = []
+                for gen, ref in zip(generated, batch['labels']):
+                    gen_code = self.tokenizer.decode(gen, skip_special_tokens=True)
+                    ref_code = self.tokenizer.decode(ref, skip_special_tokens=True)
+                    futures.append(executor.submit(
+                        self._evaluate_single_generation, gen_code, ref_code
+                    ))
+                
+                # Collect results
+                for future in futures:
+                    result = future.result()
+                    for key, value in result.items():
+                        metrics[key].append(value)
+
+        return {k: np.mean(v) for k, v in metrics.items()}
+
+    def _evaluate_single_generation(self, generated_code: str, reference_code: str) -> Dict[str, float]:
+        """Evaluate a single generated code sample."""
+        return {
+            'syntactic_validity': self._check_syntax(generated_code),
+            'semantic_similarity': self._compute_semantic_similarity(generated_code, reference_code),
+            'complexity_match': self._compare_complexity(generated_code, reference_code),
+            'style_consistency': self._check_style_consistency(generated_code)
+        }
+
+    def _compute_semantic_similarity(self, code1: str, code2: str) -> float:
+        """Compute semantic similarity using CodeBERT embeddings."""
+        try:
+            # Get embeddings
+            inputs1 = self.reference_tokenizer(code1, return_tensors='pt', truncation=True).to(self.device)
+            inputs2 = self.reference_tokenizer(code2, return_tensors='pt', truncation=True).to(self.device)
+            
+            with torch.no_grad():
+                emb1 = self.reference_model(**inputs1).pooler_output
+                emb2 = self.reference_model(**inputs2).pooler_output
+            
+            # Compute cosine similarity
+            similarity = torch.nn.functional.cosine_similarity(emb1, emb2).item()
+            return max(0.0, similarity)  # Ensure non-negative
+        except Exception as e:
+            self.logger.warning(f"Error computing semantic similarity: {e}")
+            return 0.0
+
+    def _check_syntax(self, code: str) -> float:
+        """Check if code is syntactically valid."""
+        try:
+            ast.parse(code)
+            return 1.0
+        except:
+            return 0.0
+
+    def _compare_complexity(self, generated: str, reference: str) -> float:
+        """Compare cyclomatic complexity of generated and reference code."""
+        try:
+            gen_complexity = ComplexityVisitor.from_code(generated).complexity()
+            ref_complexity = ComplexityVisitor.from_code(reference).complexity()
+            
+            # Normalize difference
+            max_complexity = max(gen_complexity, ref_complexity)
+            if max_complexity == 0:
+                return 1.0
+            return 1.0 - abs(gen_complexity - ref_complexity) / max_complexity
+        except:
+            return 0.0
+
+    def _check_style_consistency(self, code: str) -> float:
+        """Check code style consistency."""
+        try:
+            lines = code.split('\n')
+            metrics = {
+                'indentation': self._check_indentation(lines),
+                'naming': self._check_naming_conventions(code),
+                'line_length': self._check_line_lengths(lines)
+            }
+            return np.mean(list(metrics.values()))
+        except:
+            return 0.0
+
     def evaluate_code_generation(self, test_dataloader: DataLoader) -> Dict[str, float]:
         """Evaluate code generation metrics."""
         self.model.eval()

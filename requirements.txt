@@ -10,3 +10,5 @@ python-dotenv
 sentencepiece
 datasets
 requests
+pandas
+sklearn
