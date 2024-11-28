@@ -1,0 +1,7 @@
+
+.env
+__pycache__/
+*.pyc
+tokenizer_cache/
+checkpoints/
+*.log

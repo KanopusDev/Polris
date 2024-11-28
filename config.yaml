@@ -1,0 +1,27 @@
+# Training settings
+training:
+  epochs: 10
+  batch_size: 8
+  learning_rate: 1e-4
+  early_stopping_patience: 3
+  max_samples: 10000
+
+# Model architecture
+model:
+  vocab_size: 32000
+  d_model: 256
+  nhead: 4
+  num_layers: 4
+  dropout: 0.1
+
+# Data collection
+github:
+  token: ${GITHUB_TOKEN}  # Will be replaced with env variable
+  languages: ["python"]
+  min_stars: 100
+
+# System settings
+system:
+  num_workers: 2
+  memory_fraction: 0.8
+  use_mixed_precision: true

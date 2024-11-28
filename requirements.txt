@@ -1,0 +1,9 @@
+scikit-learn
+astroid
+redis
+psutil
+numpy
+torch
+tqdm
+pyyaml
+python-dotenv
