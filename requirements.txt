@@ -7,3 +7,6 @@ torch
 tqdm
 pyyaml
 python-dotenv
+sentencepiece
+datasets
+requests

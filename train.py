@@ -4,7 +4,7 @@ from torch.nn import CrossEntropyLoss
 from transformers import get_linear_schedule_with_warmup
 import wandb
 from pathlib import Path
-from data.data_loader import GitHubDataLoader
+from data.data_loader import CodeDataLoader  # Update import here too
 from models.transformer import CodeTransformer
 from models.tokenizer import CodeTokenizer
 import os
@@ -97,10 +97,9 @@ class Trainer:
         }, f'checkpoints/model_epoch_{epoch}_loss_{val_loss:.4f}.pt')
 
 if __name__ == "__main__":
-    # Initialize GitHub data loader
-    github_loader = GitHubDataLoader(token=os.getenv('GITHUB_TOKEN'))
-    repos = github_loader.fetch_repositories()
-    code_data = github_loader.fetch_code_content(repos)
+    # Initialize data loader
+    code_loader = CodeDataLoader(token=os.getenv('GITHUB_TOKEN'))
+    code_data = code_loader.load_data()
     
     # Initialize model, tokenizer, and trainer
     tokenizer = CodeTokenizer()

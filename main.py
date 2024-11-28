@@ -11,7 +11,7 @@ import numpy as np
 from torch.utils.data import DataLoader, RandomSampler
 from models.transformer import EnhancedCodeTransformer
 from models.tokenizer import EnhancedCodeTokenizer
-from data.data_loader import GitHubDataLoader, CodeDataLoader
+from data.data_loader import CodeDataLoader
 from models.conversation_manager import ConversationManager
 from dotenv import load_dotenv
 
