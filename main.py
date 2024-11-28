@@ -50,30 +50,36 @@ class ModelTrainer:
     def create_dataloaders(self, code_loader: CodeDataLoader, tokenizer: EnhancedCodeTokenizer):
         """Create memory-efficient dataloaders."""
         try:
-            # Load data from multiple sources
-            all_code_data = code_loader.load_data(sources=['github'])  # Start with just GitHub data
+            # Load and process data
+            all_code_data = code_loader.load_data(sources=['github'])
             
-            if len(all_code_data) == 0:
+            if not all_code_data:
                 raise ValueError("No code data loaded")
                 
-            # Convert strings to tensors
+            # Process data in batches to avoid memory issues
             processed_data = []
-            for code in all_code_data:
-                try:
-                    # Truncate long sequences and ensure string type
-                    code = str(code)[:512] if code else ""  # Limit sequence length
-                    if not code.strip():
-                        continue
-                        
-                    # Tokenize and convert to tensor
-                    tokens = tokenizer.encode(code)
-                    if tokens and len(tokens) > 1:  # Ensure we have valid tokens
-                        processed_data.append(tokens)
-                except Exception as e:
-                    logging.warning(f"Failed to process code sample: {str(e)}")
-                    continue
+            batch_size = 100  # Process in smaller batches
             
-            if len(processed_data) == 0:
+            for i in range(0, len(all_code_data), batch_size):
+                batch = all_code_data[i:i + batch_size]
+                for code in batch:
+                    try:
+                        if not isinstance(code, str) or not code.strip():
+                            continue
+                            
+                        # Truncate long sequences
+                        code = code[:4096]  # Increased max length for code
+                        
+                        # Tokenize
+                        tokens = tokenizer.encode(code, add_special_tokens=True)
+                        if tokens and len(tokens) > 1:
+                            processed_data.append(tokens)
+                            
+                    except Exception as e:
+                        logging.warning(f"Failed to process code sample: {str(e)}")
+                        continue
+            
+            if not processed_data:
                 raise ValueError("No valid processed data available")
                 
             # Create train/val split
@@ -122,10 +128,27 @@ class ModelTrainer:
     def train(self):
         """Main training loop with memory-efficient processing."""
         # Initialize components
+        code_loader = CodeDataLoader(
+            token=self.config['github_token'],
+            languages=self.config['languages']
+        )
+        
+        # Load data first
+        code_data = code_loader.load_data(sources=['github'])
+        if not code_data:
+            raise ValueError("No code data loaded from GitHub")
+            
+        # Initialize and train tokenizer
         tokenizer = EnhancedCodeTokenizer(
             vocab_size=self.config['vocab_size']
         )
         
+        try:
+            tokenizer.train(code_data)
+        except Exception as e:
+            logging.error(f"Failed to train tokenizer: {e}")
+            raise
+            
         model = EnhancedCodeTransformer(
             vocab_size=tokenizer.vocab_size,
             d_model=self.config['d_model'],
@@ -136,17 +159,12 @@ class ModelTrainer:
         
         # Move model to CPU and enable memory efficient optimizations
         model = model.cpu()
-        model = torch.jit.script(model)  # Use TorchScript for better CPU performance
+        model = torch.jit.script(model)
         
-        # Initialize data loading with multiple sources
-        code_loader = CodeDataLoader(
-            token=self.config['github_token'],
-            languages=self.config['languages']
-        )
-        
+        # Create dataloaders after tokenizer is trained
         train_loader, val_loader = self.create_dataloaders(code_loader, tokenizer)
         
-        # Initialize optimizer with CPU-specific settings
+        # Initialize optimizer
         optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=self.config['learning_rate'],

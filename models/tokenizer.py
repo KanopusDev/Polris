@@ -45,18 +45,31 @@ class EnhancedCodeTokenizer:
 
     def train(self, text_data: List[str], num_threads: int = 8):
         """Train the tokenizer on code data using SentencePiece."""
+        if not text_data:
+            raise ValueError("No training data provided")
+            
         logging.info(f"Training tokenizer on {len(text_data)} samples")
+        
+        # Clean and filter data
+        cleaned_data = []
+        for text in text_data:
+            if isinstance(text, str) and text.strip():
+                cleaned_data.append(text.strip())
+        
+        if not cleaned_data:
+            raise ValueError("No valid training data after cleaning")
         
         # Prepare training data
         train_path = self.cache_dir / 'train.txt'
         with open(train_path, 'w', encoding='utf-8') as f:
-            for text in text_data:
+            for text in cleaned_data:
                 f.write(f"{text}\n")
 
         # Train SentencePiece model
+        model_prefix = str(self.cache_dir / 'code_tokenizer')
         spm.SentencePieceTrainer.train(
             input=str(train_path),
-            model_prefix='code_tokenizer',
+            model_prefix=model_prefix,
             vocab_size=self.vocab_size - len(self.special_tokens),
             model_type='bpe',
             character_coverage=1.0,
@@ -65,11 +78,15 @@ class EnhancedCodeTokenizer:
             split_by_whitespace=True,
             max_sentence_length=16384,
             byte_fallback=True,
-            user_defined_symbols=list(self.special_tokens.values())
+            user_defined_symbols=list(self.special_tokens.values()),
+            pad_id=0,
+            unk_id=1,
+            bos_id=2,
+            eos_id=3
         )
 
         self.sp_model = spm.SentencePieceProcessor()
-        self.sp_model.load('code_tokenizer.model')
+        self.sp_model.load(f"{model_prefix}.model")
         self._save_model()
 
     @lru_cache(maxsize=100000)
