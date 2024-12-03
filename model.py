@@ -27,23 +27,68 @@ class CPUOptimizedTransformer(nn.Module):
         ])
     
     def _create_optimized_encoder_layer(self):
-        """Create quantization-friendly encoder layer"""
-        layer = nn.TransformerEncoderLayer(
+        """Create quantization-friendly encoder layer without LayerNorm"""
+        class QuantizableFeedForward(nn.Module):
+            def __init__(self, d_model, dim_feedforward):
+                super().__init__()
+                self.linear1 = nn.Linear(d_model, dim_feedforward)
+                self.linear2 = nn.Linear(dim_feedforward, d_model)
+                self.relu = nn.ReLU()
+                self.dropout = nn.Dropout(0.1)
+            
+            def forward(self, x):
+                return self.dropout(self.linear2(self.relu(self.linear1(x))))
+
+        class QuantizableAttention(nn.Module):
+            def __init__(self, d_model, nhead):
+                super().__init__()
+                self.d_k = d_model // nhead
+                self.nhead = nhead
+                self.query = nn.Linear(d_model, d_model)
+                self.key = nn.Linear(d_model, d_model)
+                self.value = nn.Linear(d_model, d_model)
+                self.out = nn.Linear(d_model, d_model)
+                
+            def forward(self, x):
+                batch_size = x.size(0)
+                
+                # Linear transformations
+                q = self.query(x).view(batch_size, -1, self.nhead, self.d_k).transpose(1, 2)
+                k = self.key(x).view(batch_size, -1, self.nhead, self.d_k).transpose(1, 2)
+                v = self.value(x).view(batch_size, -1, self.nhead, self.d_k).transpose(1, 2)
+                
+                # Attention scores
+                scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
+                attn = F.softmax(scores, dim=-1)
+                
+                # Apply attention to values
+                x = torch.matmul(attn, v)
+                x = x.transpose(1, 2).contiguous().view(batch_size, -1, self.nhead * self.d_k)
+                return self.out(x)
+
+        class QuantizableEncoderLayer(nn.Module):
+            def __init__(self, d_model, nhead, dim_feedforward):
+                super().__init__()
+                self.self_attn = QuantizableAttention(d_model, nhead)
+                self.feed_forward = QuantizableFeedForward(d_model, dim_feedforward)
+                self.dropout1 = nn.Dropout(0.1)
+                self.dropout2 = nn.Dropout(0.1)
+                
+            def forward(self, x):
+                # Self attention
+                att_output = self.dropout1(self.self_attn(x))
+                x = x + att_output  # Residual connection
+                
+                # Feed forward
+                ff_output = self.dropout2(self.feed_forward(x))
+                x = x + ff_output  # Residual connection
+                return x
+
+        return QuantizableEncoderLayer(
             d_model=self.hidden_size,
             nhead=8,
-            dim_feedforward=self.hidden_size * 4,
-            batch_first=True,
-            norm_first=True  # Better performance on CPU
+            dim_feedforward=self.hidden_size * 4
         )
-        # Ensure layer components are quantization-ready
-        layer.linear1 = nn.Sequential(
-            layer.linear1,
-            nn.ReLU()  # Add explicit ReLU for better quantization
-        )
-        # Enable fast path for better CPU performance
-        layer.norm1.eps = 1e-5
-        layer.norm2.eps = 1e-5
-        return layer
     
     def _build_decoder(self):
         return nn.ModuleList([
@@ -56,30 +101,12 @@ class CPUOptimizedTransformer(nn.Module):
         ])
     
     def quantize_model(self):
-        """Implement symmetric quantization for CPU"""
-        # Remove duplicate calibration call
-        self.qconfig = torch.quantization.QConfig(
-            activation=torch.quantization.observer.MinMaxObserver.with_args(
-                qscheme=torch.per_tensor_symmetric,
-                dtype=torch.quint8,
-                quant_min=0,
-                quant_max=255,
-            ),
-            weight=torch.quantization.observer.PerChannelMinMaxObserver.with_args(
-                dtype=torch.qint8,
-                qscheme=torch.per_channel_symmetric,
-                ch_axis=0,
-                quant_min=-128,
-                quant_max=127
-            )
-        )
-        
-        # Prepare model for quantization
-        self.train()
+        """Implement basic quantization for CPU"""
+        self.qconfig = torch.quantization.get_default_qconfig('fbgemm')
         torch.quantization.prepare(self, inplace=True)
         
-        # Single calibration step
-        self._run_calibration(num_batches=100)
+        # Calibrate
+        self._run_calibration(num_batches=10)
         
         # Convert to quantized model
         self.eval()
