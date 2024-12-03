@@ -52,18 +52,13 @@ class DataProcessor:
     
     def _collate_fn(self, batch):
         """Custom collate function with shape validation"""
-        input_ids = torch.cat([item['input_ids'] for item in batch], dim=0)
-        labels = torch.cat([item['labels'] for item in batch], dim=0)
+        # Stack instead of cat to maintain batch dimension
+        input_ids = torch.stack([item['input_ids'] for item in batch])
+        labels = torch.stack([item['labels'] for item in batch])
         
-        # Ensure shapes match model expectations
-        if input_ids.shape[1] > self.max_seq_length:
-            input_ids = input_ids[:, :self.max_seq_length]
-        if labels.shape[1] > self.max_seq_length:
-            labels = labels[:, :self.max_seq_length]
-            
         return {
-            'input_ids': input_ids,
-            'labels': labels
+            'input_ids': input_ids,  # Shape: (batch_size, seq_len)
+            'labels': labels         # Shape: (batch_size, seq_len)
         }
     
     def _create_dummy_data(self, path: Path) -> None:
@@ -104,20 +99,20 @@ class MemoryEfficientDataset(Dataset):
         # Load chunk of data
         chunk = self.data[start_idx:end_idx].copy()
         
-        # Ensure proper shapes and padding if needed
+        # Prepare input and labels
         input_data = chunk[:-1]
         label_data = chunk[1:]
         
-        # Pad or truncate to match model's hidden size
-        input_tensor = torch.tensor(input_data[:self.max_seq_length-1])
-        label_tensor = torch.tensor(label_data[:self.max_seq_length-1])
+        # Truncate to max sequence length
+        input_data = input_data[:self.max_seq_length]
+        label_data = label_data[:self.max_seq_length]
         
-        # Ensure labels are valid indices for the vocabulary
-        label_tensor = (label_tensor.abs() * 100).long() % self.vocab_size
+        # Convert to tensors
+        input_tensor = torch.FloatTensor(input_data)
         
-        # Add batch dimension
-        input_tensor = input_tensor.unsqueeze(0)
-        label_tensor = label_tensor.unsqueeze(0)  # Shape: [1, seq_len]
+        # Convert labels to vocabulary indices
+        label_tensor = torch.FloatTensor(label_data)
+        label_tensor = (((label_tensor + 1) * 0.5) * (self.vocab_size - 1)).long().clamp(0, self.vocab_size - 1)
         
         return {
             'input_ids': input_tensor,

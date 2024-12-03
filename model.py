@@ -11,17 +11,15 @@ class CPUOptimizedTransformer(nn.Module):
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
         
+        # Add embedding layer
+        self.embedding = nn.Linear(1, hidden_size)  # Convert scalar inputs to hidden dim
+        
         # Initialize transformer components
         self.encoder = self._build_encoder()
-        self.decoder = self._build_decoder()
         
         # Add output projection for vocabulary
         self.output_projection = nn.Linear(hidden_size, vocab_size)
         
-        # Add memory format optimization
-        self = self.to(memory_format=torch.channels_last)
-        
-        # Quantize model if specified
         if quantization_level == 'int8':
             self.quantize_model()
     
@@ -79,16 +77,6 @@ class CPUOptimizedTransformer(nn.Module):
             dim_feedforward=self.hidden_size * 4
         )
     
-    def _build_decoder(self):
-        return nn.ModuleList([
-            nn.TransformerDecoderLayer(
-                d_model=self.hidden_size,
-                nhead=8,
-                dim_feedforward=self.hidden_size * 4,
-                batch_first=True
-            ) for _ in range(self.layers)
-        ])
-    
     def quantize_model(self):
         """Apply dynamic quantization for CPU compatibility"""
         try:
@@ -135,31 +123,17 @@ class CPUOptimizedTransformer(nn.Module):
                             module.activation_post_process.calculate_qparams()
 
     def forward(self, src, tgt=None):
-        """
-        Forward pass with shape handling
-        Args:
-            src: Input tensor of shape (batch_size, seq_len) or (batch_size, seq_len, hidden_size)
-            tgt: Optional target tensor for training
-        """
-        # Ensure inputs are in correct memory format
-        if src.dim() >= 4:
-            src = src.contiguous(memory_format=torch.channels_last)
-        
-        # Handle input shape
+        # Handle input shape - expect (batch_size, seq_len)
         if len(src.shape) == 2:
-            # Add embedding dimension
-            src = src.unsqueeze(-1).expand(-1, -1, self.hidden_size)
+            src = src.unsqueeze(-1)  # Add feature dimension
+            
+        # Convert to hidden dimension
+        x = self.embedding(src)
         
-        # Validate input shape
-        batch_size, seq_len, hidden_size = src.shape
-        if hidden_size != self.hidden_size:
-            raise ValueError(f"Input hidden size {hidden_size} doesn't match model hidden size {self.hidden_size}")
-
         # Process through encoder
-        encoder_output = src
         for enc_layer in self.encoder:
-            encoder_output = enc_layer(encoder_output)
+            x = enc_layer(x)
         
         # Project to vocabulary size
-        logits = self.output_projection(encoder_output)
-        return logits  # Shape: [batch_size, seq_len, vocab_size]
+        logits = self.output_projection(x)
+        return logits

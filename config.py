@@ -3,8 +3,8 @@ from typing import Optional
 from pydantic import BaseModel, validator
 
 class ModelConfig(BaseModel):
-    layers: int = 16
-    hidden_size: int = 512
+    layers: int = 8  # Reduced for faster training
+    hidden_size: int = 256  # Reduced for memory efficiency
     quantization: str = 'int8'
     vocab_size: int = 32000
     
@@ -31,10 +31,10 @@ class TrainingConfig(BaseModel):
     model: ModelConfig = ModelConfig()
     
     # Training parameters (moved from nested structure)
-    batch_size: int = 2
+    batch_size: int = 8  # Increased for better training dynamics
     gradient_accumulation_steps: int = 16
     learning_rate: float = 3e-4
-    max_seq_length: int = 2048
+    max_seq_length: int = 512  # Reduced for memory efficiency
     epochs: int = 10
     warmup_steps: int = 1000
     weight_decay: float = 0.01

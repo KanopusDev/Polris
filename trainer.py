@@ -48,11 +48,10 @@ class Trainer:
         
     def train(self, data_processor: Any) -> None:
         self.model.train()
-        train_dataloader = data_processor.create_dataloader("train")
         
         for epoch in range(self.config.epochs):
             self.logger.info(f"Starting epoch {epoch}")
-            epoch_loss = self._train_epoch(data_processor)
+            epoch_loss = self._train_epoch(data_processor, epoch)  # Pass epoch to method
             
             # Log metrics
             self.writer.add_scalar('Loss/train', epoch_loss, epoch)
@@ -61,28 +60,25 @@ class Trainer:
             if (epoch + 1) % self.config.save_steps == 0:
                 self.save_checkpoint(epoch, epoch_loss)
                 
-    def _train_epoch(self, data_processor: Any) -> float:
+    def _train_epoch(self, data_processor: Any, epoch: int) -> float:  # Add epoch parameter
         self.model.train()
         train_dataloader = data_processor.create_dataloader("train.pt")
         
         total_loss = 0
         for step, batch in enumerate(tqdm(train_dataloader)):
-            # Ensure input and target shapes match
             input_ids = batch['input_ids']
             labels = batch['labels']
             
             # Forward pass
-            outputs = self.model(input_ids)  # Shape: [batch_size, seq_len, hidden_size]
+            logits = self.model(input_ids)  # Shape: [batch_size, seq_len, vocab_size]
             
-            # Reshape outputs for cross entropy
-            outputs = outputs.view(-1, outputs.size(-1))  # [batch_size * seq_len, hidden_size]
-            labels = labels.view(-1)  # [batch_size * seq_len]
+            # Reshape for cross entropy
+            B, S, V = logits.shape
+            logits = logits.view(B * S, V)
+            labels = labels.view(-1)
             
-            try:
-                loss = self.criterion(outputs, labels)
-            except RuntimeError as e:
-                self.logger.error(f"Shape mismatch - outputs: {outputs.shape}, labels: {labels.shape}")
-                raise
+            # Compute loss
+            loss = self.criterion(logits, labels)
             
             # Gradient accumulation
             loss = loss / self.config.gradient_accumulation_steps
@@ -94,11 +90,9 @@ class Trainer:
             
             total_loss += loss.item()
             
-            # Log progress
             if (step + 1) % self.config.logging_steps == 0:
-                self.logger.info(f"Step {step+1}: Loss = {loss.item():.4f}")
-            
-        avg_loss = total_loss / len(train_dataloader)
-        logging.info(f"Epoch {epoch}: Average Loss = {avg_loss}")
+                self.logger.info(f"Epoch {epoch}, Step {step+1}: Loss = {loss.item():.4f}")
         
+        avg_loss = total_loss / len(train_dataloader)
+        self.logger.info(f"Epoch {epoch}: Average Loss = {avg_loss:.4f}")
         return avg_loss
