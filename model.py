@@ -27,13 +27,18 @@ class CPUOptimizedTransformer(nn.Module):
         ])
     
     def _create_optimized_encoder_layer(self):
-        # Use PyTorch's native optimizations
+        """Create quantization-friendly encoder layer"""
         layer = nn.TransformerEncoderLayer(
             d_model=self.hidden_size,
             nhead=8,
             dim_feedforward=self.hidden_size * 4,
             batch_first=True,
             norm_first=True  # Better performance on CPU
+        )
+        # Ensure layer components are quantization-ready
+        layer.linear1 = nn.Sequential(
+            layer.linear1,
+            nn.ReLU()  # Add explicit ReLU for better quantization
         )
         # Enable fast path for better CPU performance
         layer.norm1.eps = 1e-5
@@ -51,23 +56,48 @@ class CPUOptimizedTransformer(nn.Module):
         ])
     
     def quantize_model(self):
-        """Standard PyTorch quantization with proper initialization"""
+        """Implement symmetric quantization for CPU"""
+        # Set up symmetric quantization config
         self.qconfig = torch.quantization.QConfig(
             activation=torch.quantization.observer.MinMaxObserver.with_args(
-                qscheme=torch.per_tensor_affine,
+                qscheme=torch.per_tensor_symmetric,  # Changed to symmetric
                 dtype=torch.quint8,
                 quant_min=0,
                 quant_max=255,
             ),
-            weight=torch.quantization.observer.MinMaxObserver.with_args(
+            weight=torch.quantization.observer.PerChannelMinMaxObserver.with_args(
                 dtype=torch.qint8,
+                qscheme=torch.per_channel_symmetric,  # Changed to symmetric
+                ch_axis=0,
                 quant_min=-128,
-                quant_max=127,
+                quant_max=127
             )
         )
+        
+        # Prepare model for quantization
+        self.train()  # Set to training mode for calibration
         torch.quantization.prepare(self, inplace=True)
-        # Calibrate (you might want to run some data through the model here)
+        
+        # Calibrate with dummy data
+        self._calibrate_model()
+        
+        # Convert to quantized model
+        self.eval()  # Set to eval mode before conversion
         torch.quantization.convert(self, inplace=True)
+    
+    def _calibrate_model(self, num_batches=10):
+        """Calibrate model with dummy data"""
+        self.eval()
+        with torch.no_grad():
+            for _ in range(num_batches):
+                # Create dummy batch for calibration
+                dummy_input = torch.randn(
+                    1, 
+                    self.hidden_size, 
+                    device='cpu'
+                )
+                # Forward pass for calibration
+                _ = self(dummy_input)
     
     def forward(self, src, tgt=None):
         # Encoder
