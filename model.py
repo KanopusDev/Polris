@@ -28,65 +28,48 @@ class CPUOptimizedTransformer(nn.Module):
         ])
     
     def _create_optimized_encoder_layer(self):
-        """Create quantization-friendly encoder layer without LayerNorm"""
-        class QuantizableFeedForward(nn.Module):
-            def __init__(self, d_model, dim_feedforward):
-                super().__init__()
-                self.linear1 = nn.Linear(d_model, dim_feedforward)
-                self.linear2 = nn.Linear(dim_feedforward, d_model)
-                self.relu = nn.ReLU()
-                self.dropout = nn.Dropout(0.1)
-            
-            def forward(self, x):
-                return self.dropout(self.linear2(self.relu(self.linear1(x))))
-
-        class QuantizableAttention(nn.Module):
+        """Create CPU-friendly encoder layer"""
+        class SimplifiedAttention(nn.Module):
             def __init__(self, d_model, nhead):
                 super().__init__()
                 self.d_k = d_model // nhead
                 self.nhead = nhead
-                self.scaling = self.d_k ** -0.5  # Pre-compute scaling factor
-                self.query = nn.Linear(d_model, d_model)
-                self.key = nn.Linear(d_model, d_model)
-                self.value = nn.Linear(d_model, d_model)
-                self.out = nn.Linear(d_model, d_model)
+                self.scaling = self.d_k ** -0.5
+                # Single linear layer for all projections
+                self.qkv_proj = nn.Linear(d_model, 3 * d_model)
+                self.out_proj = nn.Linear(d_model, d_model)
                 
             def forward(self, x):
                 batch_size = x.size(0)
-                
-                # Linear transformations
-                q = self.query(x).view(batch_size, -1, self.nhead, self.d_k).transpose(1, 2)
-                k = self.key(x).view(batch_size, -1, self.nhead, self.d_k).transpose(1, 2)
-                v = self.value(x).view(batch_size, -1, self.nhead, self.d_k).transpose(1, 2)
+                # Single matrix multiplication for Q, K, V projections
+                qkv = self.qkv_proj(x)
+                qkv = qkv.reshape(batch_size, -1, 3, self.nhead, self.d_k).permute(2, 0, 3, 1, 4)
+                q, k, v = qkv[0], qkv[1], qkv[2]
                 
                 # Scaled dot-product attention
                 scores = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
                 attn = F.softmax(scores, dim=-1)
-                
-                # Apply attention to values
                 x = torch.matmul(attn, v)
-                x = x.transpose(1, 2).contiguous().view(batch_size, -1, self.nhead * self.d_k)
-                return self.out(x)
+                x = x.transpose(1, 2).reshape(batch_size, -1, self.nhead * self.d_k)
+                return self.out_proj(x)
 
-        class QuantizableEncoderLayer(nn.Module):
+        class SimplifiedEncoderLayer(nn.Module):
             def __init__(self, d_model, nhead, dim_feedforward):
                 super().__init__()
-                self.self_attn = QuantizableAttention(d_model, nhead)
-                self.feed_forward = QuantizableFeedForward(d_model, dim_feedforward)
-                self.dropout1 = nn.Dropout(0.1)
-                self.dropout2 = nn.Dropout(0.1)
+                self.self_attn = SimplifiedAttention(d_model, nhead)
+                self.linear1 = nn.Linear(d_model, dim_feedforward)
+                self.linear2 = nn.Linear(dim_feedforward, d_model)
+                self.relu = nn.ReLU()
+                self.dropout = nn.Dropout(0.1)
                 
             def forward(self, x):
-                # Self attention
-                att_output = self.dropout1(self.self_attn(x))
-                x = x + att_output  # Residual connection
-                
-                # Feed forward
-                ff_output = self.dropout2(self.feed_forward(x))
-                x = x + ff_output  # Residual connection
+                # Self attention and residual
+                x = x + self.self_attn(x)
+                # FFN and residual
+                x = x + self.dropout(self.linear2(self.relu(self.linear1(x))))
                 return x
 
-        return QuantizableEncoderLayer(
+        return SimplifiedEncoderLayer(
             d_model=self.hidden_size,
             nhead=8,
             dim_feedforward=self.hidden_size * 4
@@ -103,20 +86,21 @@ class CPUOptimizedTransformer(nn.Module):
         ])
     
     def quantize_model(self):
-        """Implement basic quantization for CPU"""
-        # Ensure model is in training mode before preparing
-        self.train()
-        
-        # Basic quantization config
-        self.qconfig = torch.quantization.get_default_qconfig('fbgemm')
-        
-        # Prepare and calibrate
-        torch.quantization.prepare(self, inplace=True)
-        self._run_calibration(num_batches=10)
-        
-        # Convert to quantized model
-        self.eval()
-        torch.quantization.convert(self, inplace=True)
+        """Apply dynamic quantization for CPU compatibility"""
+        try:
+            # Apply dynamic quantization to linear layers
+            self.encoder = torch.quantization.quantize_dynamic(
+                self.encoder,
+                {nn.Linear},  # Quantize only linear layers
+                dtype=torch.qint8
+            )
+            self.decoder = torch.quantization.quantize_dynamic(
+                self.decoder,
+                {nn.Linear},
+                dtype=torch.qint8
+            )
+        except Exception as e:
+            print(f"Quantization failed: {str(e)}. Continuing with unquantized model.")
     
     def _calibrate_model(self, num_batches=10):
         """Calibrate model with dummy data"""
