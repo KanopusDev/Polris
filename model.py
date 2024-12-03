@@ -6,6 +6,12 @@ from typing import Optional
 class CPUOptimizedTransformer(nn.Module):
     def __init__(self, layers=16, hidden_size=768, quantization_level='int8'):
         super().__init__()
+        
+        # Configure model for CPU optimization
+        torch._C._jit_set_profiling_executor(False)
+        torch._C._jit_set_profiling_mode(False)
+        torch._C._set_graph_executor_optimize(False)
+        
         self.layers = layers
         self.hidden_size = hidden_size
         
@@ -15,6 +21,9 @@ class CPUOptimizedTransformer(nn.Module):
         
         self.encoder = self._build_encoder()
         self.decoder = self._build_decoder()
+        
+        # Add memory format optimization
+        self = self.to(memory_format=torch.channels_last)
         
         # Quantize model if specified using standard PyTorch quantization
         if quantization_level == 'int8':
@@ -120,6 +129,10 @@ class CPUOptimizedTransformer(nn.Module):
             src: Input tensor of shape (batch_size, seq_len) or (batch_size, seq_len, hidden_size)
             tgt: Optional target tensor for training
         """
+        # Ensure inputs are in correct memory format
+        if src.dim() >= 4:
+            src = src.contiguous(memory_format=torch.channels_last)
+        
         # Handle input shape
         if len(src.shape) == 2:
             # Add embedding dimension

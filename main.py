@@ -1,4 +1,5 @@
 import logging
+import warnings
 import sys
 from pathlib import Path
 from typing import Optional
@@ -18,8 +19,25 @@ def setup_logging(log_file: Optional[str] = None) -> None:
         ]
     )
 
+def setup_environment():
+    """Configure PyTorch environment and silence warnings"""
+    # Silence backend fallback warnings
+    warnings.filterwarnings("ignore", category=UserWarning)
+    
+    # Configure PyTorch CPU settings
+    torch.set_num_threads(4)  # Or number of CPU cores
+    torch.set_num_interop_threads(1)
+    
+    # Enable CPU optimizations
+    torch.backends.cpu.preferred_memory_format = torch.channels_last
+    if hasattr(torch.backends, 'mkldnn'):
+        torch.backends.mkldnn.enabled = True
+
 def main() -> None:
     try:
+        # Setup environment first
+        setup_environment()
+        
         # Setup logging
         setup_logging()
         logger = logging.getLogger(__name__)
