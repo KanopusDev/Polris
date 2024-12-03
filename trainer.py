@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.cuda.amp import autocast, GradScaler
 import logging
 from pathlib import Path
 from typing import Dict, Any
@@ -51,7 +50,7 @@ class Trainer:
         self.model.train()
         train_dataloader = data_processor.create_dataloader("train")
         
-        for epoch in range(self.config.training.epochs):
+        for epoch in range(self.config.epochs):
             self.logger.info(f"Starting epoch {epoch}")
             epoch_loss = self._train_epoch(data_processor)
             
@@ -59,7 +58,7 @@ class Trainer:
             self.writer.add_scalar('Loss/train', epoch_loss, epoch)
             
             # Save checkpoint
-            if (epoch + 1) % self.config.training.save_steps == 0:
+            if (epoch + 1) % self.config.save_steps == 0:
                 self.save_checkpoint(epoch, epoch_loss)
                 
     def _train_epoch(self, data_processor: Any) -> float:
@@ -67,11 +66,11 @@ class Trainer:
         train_dataloader = data_processor.create_dataloader("train.pt")
         
         total_loss = 0
-        for step, batch in enumerate(train_dataloader):
+        for step, batch in enumerate(tqdm(train_dataloader)):
             outputs = self.model(batch['input_ids'])
             loss = self.criterion(outputs, batch['labels'])
             
-            # Gradient accumulation without scaler
+            # Gradient accumulation
             loss = loss / self.config.gradient_accumulation_steps
             loss.backward()
             
@@ -80,6 +79,10 @@ class Trainer:
                 self.optimizer.zero_grad()
             
             total_loss += loss.item()
+            
+            # Log progress
+            if (step + 1) % self.config.logging_steps == 0:
+                self.logger.info(f"Step {step+1}: Loss = {loss.item():.4f}")
             
         avg_loss = total_loss / len(train_dataloader)
         logging.info(f"Epoch {epoch}: Average Loss = {avg_loss}")

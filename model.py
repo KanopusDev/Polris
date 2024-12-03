@@ -56,18 +56,18 @@ class CPUOptimizedTransformer(nn.Module):
         ])
     
     def quantize_model(self):
-        """Implement symmetric quantization for CPU with proper calibration"""
-        # Set up symmetric quantization config
+        """Implement symmetric quantization for CPU"""
+        # Remove duplicate calibration call
         self.qconfig = torch.quantization.QConfig(
             activation=torch.quantization.observer.MinMaxObserver.with_args(
-                qscheme=torch.per_tensor_symmetric,  # Changed to symmetric
+                qscheme=torch.per_tensor_symmetric,
                 dtype=torch.quint8,
                 quant_min=0,
                 quant_max=255,
             ),
             weight=torch.quantization.observer.PerChannelMinMaxObserver.with_args(
                 dtype=torch.qint8,
-                qscheme=torch.per_channel_symmetric,  # Changed to symmetric
+                qscheme=torch.per_channel_symmetric,
                 ch_axis=0,
                 quant_min=-128,
                 quant_max=127
@@ -75,17 +75,14 @@ class CPUOptimizedTransformer(nn.Module):
         )
         
         # Prepare model for quantization
-        self.train()  # Set to training mode for calibration
+        self.train()
         torch.quantization.prepare(self, inplace=True)
         
-        # Calibrate with dummy data
-        self._calibrate_model()
-        
-        # Run calibration before converting
-        self._run_calibration()
+        # Single calibration step
+        self._run_calibration(num_batches=100)
         
         # Convert to quantized model
-        self.eval()  # Set to eval mode before conversion
+        self.eval()
         torch.quantization.convert(self, inplace=True)
     
     def _calibrate_model(self, num_batches=10):
@@ -103,23 +100,18 @@ class CPUOptimizedTransformer(nn.Module):
                 _ = self(dummy_input)
     
     def _run_calibration(self, num_batches=100):
-        """Run proper calibration with dummy data"""
+        """Run calibration with proper observer updates"""
         self.eval()
         with torch.no_grad():
-            for _ in range(num_batches):
-                # Create dummy batch for calibration
-                dummy_input = torch.randn(
-                    4,  # batch_size
-                    32,  # sequence_length
-                    self.hidden_size,  # embedding_dim
-                    device='cpu'
-                )
+            for i in range(num_batches):
+                dummy_input = torch.randn(4, 32, self.hidden_size)
                 _ = self(dummy_input)
                 
-                # Force observer update
-                for module in self.modules():
-                    if hasattr(module, 'observer_enabled'):
-                        module.calculate_qparams()
+                # Update observers after each forward pass
+                if i % 10 == 0:  # Update less frequently for efficiency
+                    for module in self.modules():
+                        if hasattr(module, 'activation_post_process'):
+                            module.activation_post_process.calculate_qparams()
 
     def forward(self, src, tgt=None):
         """
