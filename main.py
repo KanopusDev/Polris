@@ -41,8 +41,8 @@ def main() -> None:
             
         # Initialize training components
         data_processor = DataProcessor(
-            batch_size=config.training.batch_size,
-            max_seq_length=config.training.max_seq_length
+            batch_size=config.batch_size,
+            max_seq_length=config.max_seq_length
         )
         
         trainer = Trainer(

@@ -23,8 +23,8 @@ class Trainer:
     def _initialize_training_components(self) -> None:
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
-            lr=self.config.training.learning_rate,
-            weight_decay=self.config.training.weight_decay
+            lr=self.config.learning_rate,
+            weight_decay=self.config.weight_decay
         )
         self.scaler = torch.cuda.amp.GradScaler()
         self.criterion = torch.nn.CrossEntropyLoss()

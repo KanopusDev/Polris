@@ -20,7 +20,10 @@ class ModelConfig(BaseModel):
         return v
 
 class TrainingConfig(BaseModel):
+    # Model config
     model: ModelConfig = ModelConfig()
+    
+    # Training parameters (moved from nested structure)
     batch_size: int = 2
     gradient_accumulation_steps: int = 16
     learning_rate: float = 3e-4

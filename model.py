@@ -51,9 +51,22 @@ class CPUOptimizedTransformer(nn.Module):
         ])
     
     def quantize_model(self):
-        """Standard PyTorch quantization"""
-        self.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+        """Standard PyTorch quantization with proper initialization"""
+        self.qconfig = torch.quantization.QConfig(
+            activation=torch.quantization.observer.MinMaxObserver.with_args(
+                qscheme=torch.per_tensor_affine,
+                dtype=torch.quint8,
+                quant_min=0,
+                quant_max=255,
+            ),
+            weight=torch.quantization.observer.MinMaxObserver.with_args(
+                dtype=torch.qint8,
+                quant_min=-128,
+                quant_max=127,
+            )
+        )
         torch.quantization.prepare(self, inplace=True)
+        # Calibrate (you might want to run some data through the model here)
         torch.quantization.convert(self, inplace=True)
     
     def forward(self, src, tgt=None):
