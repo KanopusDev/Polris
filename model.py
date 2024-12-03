@@ -5,14 +5,18 @@ import math
 from typing import Optional
 
 class CPUOptimizedTransformer(nn.Module):
-    def __init__(self, layers=16, hidden_size=768, quantization_level='int8'):
+    def __init__(self, layers=16, hidden_size=768, quantization_level='int8', vocab_size=32000):
         super().__init__()
         self.layers = layers
         self.hidden_size = hidden_size
+        self.vocab_size = vocab_size
         
         # Initialize transformer components
         self.encoder = self._build_encoder()
         self.decoder = self._build_decoder()
+        
+        # Add output projection for vocabulary
+        self.output_projection = nn.Linear(hidden_size, vocab_size)
         
         # Add memory format optimization
         self = self.to(memory_format=torch.channels_last)
@@ -156,11 +160,6 @@ class CPUOptimizedTransformer(nn.Module):
         for enc_layer in self.encoder:
             encoder_output = enc_layer(encoder_output)
         
-        # Add linear projection for classification
-        if not hasattr(self, 'output_projection'):
-            self.output_projection = nn.Linear(self.hidden_size, self.hidden_size)
-            
         # Project to vocabulary size
-        output = self.output_projection(encoder_output)
-        
-        return output  # Shape: [batch_size, seq_len, hidden_size]
+        logits = self.output_projection(encoder_output)
+        return logits  # Shape: [batch_size, seq_len, vocab_size]

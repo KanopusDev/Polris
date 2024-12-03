@@ -7,7 +7,8 @@ import logging
 import os
 
 class DataProcessor:
-    def __init__(self, batch_size: int, max_seq_length: int) -> None:
+    def __init__(self, batch_size: int, max_seq_length: int, vocab_size: int = 32000) -> None:
+        self.vocab_size = vocab_size
         self.logger = logging.getLogger(__name__)
         self._validate_params(batch_size, max_seq_length)
         self.batch_size = batch_size
@@ -82,9 +83,10 @@ class DataProcessor:
         fp.flush()
 
 class MemoryEfficientDataset(Dataset):
-    def __init__(self, data_path, max_seq_length):
+    def __init__(self, data_path, max_seq_length, vocab_size=32000):
         self.data_path = data_path
         self.max_seq_length = max_seq_length
+        self.vocab_size = vocab_size
         # Memory-mapped file handling
         self.data = np.memmap(
             data_path,
@@ -110,9 +112,12 @@ class MemoryEfficientDataset(Dataset):
         input_tensor = torch.tensor(input_data[:self.max_seq_length-1])
         label_tensor = torch.tensor(label_data[:self.max_seq_length-1])
         
+        # Ensure labels are valid indices for the vocabulary
+        label_tensor = (label_tensor.abs() * 100).long() % self.vocab_size
+        
         # Add batch dimension
         input_tensor = input_tensor.unsqueeze(0)
-        label_tensor = label_tensor.unsqueeze(0).long()  # Convert to long for CrossEntropyLoss
+        label_tensor = label_tensor.unsqueeze(0)  # Shape: [1, seq_len]
         
         return {
             'input_ids': input_tensor,

@@ -6,6 +6,7 @@ class ModelConfig(BaseModel):
     layers: int = 16
     hidden_size: int = 512
     quantization: str = 'int8'
+    vocab_size: int = 32000
     
     @validator('layers')
     def validate_layers(cls, v):
@@ -17,6 +18,12 @@ class ModelConfig(BaseModel):
     def validate_hidden_size(cls, v):
         if v <= 0 or v % 64 != 0:
             raise ValueError('Hidden size must be positive and divisible by 64')
+        return v
+
+    @validator('vocab_size')
+    def validate_vocab_size(cls, v):
+        if v <= 0:
+            raise ValueError('Vocabulary size must be positive')
         return v
 
 class TrainingConfig(BaseModel):

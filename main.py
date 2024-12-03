@@ -56,7 +56,8 @@ def main() -> None:
             model = CPUOptimizedTransformer(
                 layers=config.model.layers,
                 hidden_size=config.model.hidden_size,
-                quantization_level=config.model.quantization
+                quantization_level=config.model.quantization,
+                vocab_size=config.model.vocab_size
             )
         except Exception as e:
             logger.error(f"Failed to initialize model: {str(e)}")
@@ -65,7 +66,8 @@ def main() -> None:
         # Initialize training components
         data_processor = DataProcessor(
             batch_size=config.batch_size,
-            max_seq_length=config.max_seq_length
+            max_seq_length=config.max_seq_length,
+            vocab_size=config.model.vocab_size
         )
         
         trainer = Trainer(
