@@ -67,8 +67,22 @@ class Trainer:
         
         total_loss = 0
         for step, batch in enumerate(tqdm(train_dataloader)):
-            outputs = self.model(batch['input_ids'])
-            loss = self.criterion(outputs, batch['labels'])
+            # Ensure input and target shapes match
+            input_ids = batch['input_ids']
+            labels = batch['labels']
+            
+            # Forward pass
+            outputs = self.model(input_ids)  # Shape: [batch_size, seq_len, hidden_size]
+            
+            # Reshape outputs for cross entropy
+            outputs = outputs.view(-1, outputs.size(-1))  # [batch_size * seq_len, hidden_size]
+            labels = labels.view(-1)  # [batch_size * seq_len]
+            
+            try:
+                loss = self.criterion(outputs, labels)
+            except RuntimeError as e:
+                self.logger.error(f"Shape mismatch - outputs: {outputs.shape}, labels: {labels.shape}")
+                raise
             
             # Gradient accumulation
             loss = loss / self.config.gradient_accumulation_steps

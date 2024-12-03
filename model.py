@@ -156,16 +156,11 @@ class CPUOptimizedTransformer(nn.Module):
         for enc_layer in self.encoder:
             encoder_output = enc_layer(encoder_output)
         
-        # Handle decoder if in training mode
-        if self.training and tgt is not None:
-            if len(tgt.shape) == 2:
-                tgt = tgt.unsqueeze(-1).expand(-1, -1, self.hidden_size)
-            decoder_output = tgt
-            for dec_layer in self.decoder:
-                decoder_output = dec_layer(
-                    decoder_output,
-                    encoder_output
-                )
-            return decoder_output
+        # Add linear projection for classification
+        if not hasattr(self, 'output_projection'):
+            self.output_projection = nn.Linear(self.hidden_size, self.hidden_size)
+            
+        # Project to vocabulary size
+        output = self.output_projection(encoder_output)
         
-        return encoder_output
+        return output  # Shape: [batch_size, seq_len, hidden_size]

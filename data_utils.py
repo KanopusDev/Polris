@@ -50,13 +50,19 @@ class DataProcessor:
             raise
     
     def _collate_fn(self, batch):
-        """Custom collate function to ensure proper tensor shapes"""
+        """Custom collate function with shape validation"""
         input_ids = torch.cat([item['input_ids'] for item in batch], dim=0)
         labels = torch.cat([item['labels'] for item in batch], dim=0)
         
+        # Ensure shapes match model expectations
+        if input_ids.shape[1] > self.max_seq_length:
+            input_ids = input_ids[:, :self.max_seq_length]
+        if labels.shape[1] > self.max_seq_length:
+            labels = labels[:, :self.max_seq_length]
+            
         return {
-            'input_ids': input_ids,  # Shape: (batch_size, seq_len)
-            'labels': labels         # Shape: (batch_size, seq_len)
+            'input_ids': input_ids,
+            'labels': labels
         }
     
     def _create_dummy_data(self, path: Path) -> None:
@@ -96,9 +102,17 @@ class MemoryEfficientDataset(Dataset):
         # Load chunk of data
         chunk = self.data[start_idx:end_idx].copy()
         
-        # Ensure proper shape (batch_size, seq_len)
-        input_tensor = torch.tensor(chunk[:-1]).reshape(1, -1)
-        label_tensor = torch.tensor(chunk[1:]).reshape(1, -1)
+        # Ensure proper shapes and padding if needed
+        input_data = chunk[:-1]
+        label_data = chunk[1:]
+        
+        # Pad or truncate to match model's hidden size
+        input_tensor = torch.tensor(input_data[:self.max_seq_length-1])
+        label_tensor = torch.tensor(label_data[:self.max_seq_length-1])
+        
+        # Add batch dimension
+        input_tensor = input_tensor.unsqueeze(0)
+        label_tensor = label_tensor.unsqueeze(0).long()  # Convert to long for CrossEntropyLoss
         
         return {
             'input_ids': input_tensor,
