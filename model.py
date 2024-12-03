@@ -56,7 +56,7 @@ class CPUOptimizedTransformer(nn.Module):
         ])
     
     def quantize_model(self):
-        """Implement symmetric quantization for CPU"""
+        """Implement symmetric quantization for CPU with proper calibration"""
         # Set up symmetric quantization config
         self.qconfig = torch.quantization.QConfig(
             activation=torch.quantization.observer.MinMaxObserver.with_args(
@@ -81,6 +81,9 @@ class CPUOptimizedTransformer(nn.Module):
         # Calibrate with dummy data
         self._calibrate_model()
         
+        # Run calibration before converting
+        self._run_calibration()
+        
         # Convert to quantized model
         self.eval()  # Set to eval mode before conversion
         torch.quantization.convert(self, inplace=True)
@@ -98,6 +101,25 @@ class CPUOptimizedTransformer(nn.Module):
                     device='cpu'
                 )
                 _ = self(dummy_input)
+    
+    def _run_calibration(self, num_batches=100):
+        """Run proper calibration with dummy data"""
+        self.eval()
+        with torch.no_grad():
+            for _ in range(num_batches):
+                # Create dummy batch for calibration
+                dummy_input = torch.randn(
+                    4,  # batch_size
+                    32,  # sequence_length
+                    self.hidden_size,  # embedding_dim
+                    device='cpu'
+                )
+                _ = self(dummy_input)
+                
+                # Force observer update
+                for module in self.modules():
+                    if hasattr(module, 'observer_enabled'):
+                        module.calculate_qparams()
 
     def forward(self, src, tgt=None):
         """

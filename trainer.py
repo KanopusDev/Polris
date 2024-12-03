@@ -26,7 +26,6 @@ class Trainer:
             lr=self.config.learning_rate,
             weight_decay=self.config.weight_decay
         )
-        self.scaler = torch.cuda.amp.GradScaler()
         self.criterion = torch.nn.CrossEntropyLoss()
         
     def save_checkpoint(self, epoch: int, loss: float) -> None:
@@ -65,21 +64,19 @@ class Trainer:
                 
     def _train_epoch(self, data_processor: Any) -> float:
         self.model.train()
-        train_dataloader = data_processor.create_dataloader("train")
+        train_dataloader = data_processor.create_dataloader("train.pt")
         
         total_loss = 0
         for step, batch in enumerate(train_dataloader):
-            with autocast():
-                outputs = self.model(batch['input_ids'])
-                loss = self.criterion(outputs, batch['labels'])
-                
-            # Gradient accumulation
+            outputs = self.model(batch['input_ids'])
+            loss = self.criterion(outputs, batch['labels'])
+            
+            # Gradient accumulation without scaler
             loss = loss / self.config.gradient_accumulation_steps
-            self.scaler.scale(loss).backward()
+            loss.backward()
             
             if (step + 1) % self.config.gradient_accumulation_steps == 0:
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                self.optimizer.step()
                 self.optimizer.zero_grad()
             
             total_loss += loss.item()

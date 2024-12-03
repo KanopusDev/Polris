@@ -4,6 +4,7 @@ import numpy as np
 from pathlib import Path
 from typing import Dict, Any
 import logging
+import os
 
 class DataProcessor:
     def __init__(self, batch_size: int, max_seq_length: int) -> None:
@@ -11,6 +12,8 @@ class DataProcessor:
         self._validate_params(batch_size, max_seq_length)
         self.batch_size = batch_size
         self.max_seq_length = max_seq_length
+        self.data_dir = Path("data")
+        self.data_dir.mkdir(exist_ok=True)
         
     @staticmethod
     def _validate_params(batch_size: int, max_seq_length: int) -> None:
@@ -20,9 +23,13 @@ class DataProcessor:
             raise ValueError("Max sequence length must be positive")
     
     def create_dataloader(self, data_path: str) -> torch.utils.data.DataLoader:
-        path = Path(data_path)
+        path = self.data_dir / data_path
+        if not path.suffix:
+            path = path.with_suffix('.pt')
+            
         if not path.exists():
-            raise FileNotFoundError(f"Data file not found: {data_path}")
+            self.logger.info(f"Creating dummy data file: {path}")
+            self._create_dummy_data(path)
             
         try:
             dataset = MemoryEfficientDataset(
@@ -33,7 +40,7 @@ class DataProcessor:
                 dataset,
                 batch_size=self.batch_size,
                 shuffle=True,
-                pin_memory=True,
+                pin_memory=False,  # Changed to False for CPU-only
                 num_workers=4,
                 drop_last=True,
                 collate_fn=self._collate_fn
@@ -51,6 +58,22 @@ class DataProcessor:
             'input_ids': input_ids,  # Shape: (batch_size, seq_len)
             'labels': labels         # Shape: (batch_size, seq_len)
         }
+    
+    def _create_dummy_data(self, path: Path) -> None:
+        """Create dummy data for testing"""
+        dummy_data = np.random.randn(
+            self.max_seq_length * 1000  # Create 1000 sequences
+        ).astype(np.float32)
+        
+        # Save as memory-mapped file
+        fp = np.memmap(
+            path,
+            dtype='float32',
+            mode='w+',
+            shape=dummy_data.shape
+        )
+        fp[:] = dummy_data[:]
+        fp.flush()
 
 class MemoryEfficientDataset(Dataset):
     def __init__(self, data_path, max_seq_length):
