@@ -21,23 +21,28 @@ def setup_logging(log_file: Optional[str] = None) -> None:
 
 def setup_environment():
     """Configure PyTorch environment and silence warnings"""
-    # Silence backend fallback warnings
-    warnings.filterwarnings("ignore", category=UserWarning)
-    
-    # Configure PyTorch CPU settings
+    # Must set threads before any other PyTorch operations
     torch.set_num_threads(4)  # Or number of CPU cores
     torch.set_num_interop_threads(1)
+    
+    # Configure PyTorch backend settings
+    torch._C._jit_set_profiling_executor(False)
+    torch._C._jit_set_profiling_mode(False)
+    torch._C._set_graph_executor_optimize(False)
     
     # Enable CPU optimizations
     torch.backends.cpu.preferred_memory_format = torch.channels_last
     if hasattr(torch.backends, 'mkldnn'):
         torch.backends.mkldnn.enabled = True
+    
+    # Silence warnings
+    warnings.filterwarnings("ignore", category=UserWarning)
 
 def main() -> None:
+    # Must call setup_environment before any other operations
+    setup_environment()
+    
     try:
-        # Setup environment first
-        setup_environment()
-        
         # Setup logging
         setup_logging()
         logger = logging.getLogger(__name__)
