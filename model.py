@@ -80,17 +80,27 @@ class CPUOptimizedTransformer(nn.Module):
     def quantize_model(self):
         """Apply dynamic quantization for CPU compatibility"""
         try:
-            # Apply dynamic quantization to linear layers
-            self.encoder = torch.quantization.quantize_dynamic(
-                self.encoder,
-                {nn.Linear},  # Quantize only linear layers
-                dtype=torch.qint8
-            )
-            self.decoder = torch.quantization.quantize_dynamic(
-                self.decoder,
+            # Quantize embedding
+            self.embedding = torch.quantization.quantize_dynamic(
+                self.embedding,
                 {nn.Linear},
                 dtype=torch.qint8
             )
+            
+            # Quantize encoder
+            self.encoder = torch.quantization.quantize_dynamic(
+                self.encoder,
+                {nn.Linear},
+                dtype=torch.qint8
+            )
+            
+            # Quantize output projection
+            self.output_projection = torch.quantization.quantize_dynamic(
+                self.output_projection,
+                {nn.Linear},
+                dtype=torch.qint8
+            )
+            
         except Exception as e:
             print(f"Quantization failed: {str(e)}. Continuing with unquantized model.")
     
