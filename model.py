@@ -90,26 +90,47 @@ class CPUOptimizedTransformer(nn.Module):
         self.eval()
         with torch.no_grad():
             for _ in range(num_batches):
-                # Create dummy batch for calibration
+                # Create dummy batch with correct shape
                 dummy_input = torch.randn(
-                    1, 
-                    self.hidden_size, 
+                    2,  # batch_size
+                    32,  # sequence_length
+                    self.hidden_size,  # embedding_dim
                     device='cpu'
                 )
-                # Forward pass for calibration
                 _ = self(dummy_input)
-    
+
     def forward(self, src, tgt=None):
-        # Encoder
+        """
+        Forward pass with shape handling
+        Args:
+            src: Input tensor of shape (batch_size, seq_len) or (batch_size, seq_len, hidden_size)
+            tgt: Optional target tensor for training
+        """
+        # Handle input shape
+        if len(src.shape) == 2:
+            # Add embedding dimension
+            src = src.unsqueeze(-1).expand(-1, -1, self.hidden_size)
+        
+        # Validate input shape
+        batch_size, seq_len, hidden_size = src.shape
+        if hidden_size != self.hidden_size:
+            raise ValueError(f"Input hidden size {hidden_size} doesn't match model hidden size {self.hidden_size}")
+
+        # Process through encoder
         encoder_output = src
         for enc_layer in self.encoder:
             encoder_output = enc_layer(encoder_output)
-            
-        # Decoder (if in training mode)
+        
+        # Handle decoder if in training mode
         if self.training and tgt is not None:
+            if len(tgt.shape) == 2:
+                tgt = tgt.unsqueeze(-1).expand(-1, -1, self.hidden_size)
             decoder_output = tgt
             for dec_layer in self.decoder:
-                decoder_output = dec_layer(decoder_output, encoder_output)
+                decoder_output = dec_layer(
+                    decoder_output,
+                    encoder_output
+                )
             return decoder_output
-            
+        
         return encoder_output

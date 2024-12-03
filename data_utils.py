@@ -35,11 +35,22 @@ class DataProcessor:
                 shuffle=True,
                 pin_memory=True,
                 num_workers=4,
-                drop_last=True
+                drop_last=True,
+                collate_fn=self._collate_fn
             )
         except Exception as e:
             self.logger.error(f"Failed to create dataloader: {str(e)}")
             raise
+    
+    def _collate_fn(self, batch):
+        """Custom collate function to ensure proper tensor shapes"""
+        input_ids = torch.cat([item['input_ids'] for item in batch], dim=0)
+        labels = torch.cat([item['labels'] for item in batch], dim=0)
+        
+        return {
+            'input_ids': input_ids,  # Shape: (batch_size, seq_len)
+            'labels': labels         # Shape: (batch_size, seq_len)
+        }
 
 class MemoryEfficientDataset(Dataset):
     def __init__(self, data_path, max_seq_length):
@@ -61,7 +72,12 @@ class MemoryEfficientDataset(Dataset):
         
         # Load chunk of data
         chunk = self.data[start_idx:end_idx].copy()
+        
+        # Ensure proper shape (batch_size, seq_len)
+        input_tensor = torch.tensor(chunk[:-1]).reshape(1, -1)
+        label_tensor = torch.tensor(chunk[1:]).reshape(1, -1)
+        
         return {
-            'input_ids': torch.tensor(chunk[:-1]),
-            'labels': torch.tensor(chunk[1:])
+            'input_ids': input_tensor,
+            'labels': label_tensor
         }
