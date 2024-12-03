@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import math
 from typing import Optional
 
 class CPUOptimizedTransformer(nn.Module):
@@ -44,6 +45,7 @@ class CPUOptimizedTransformer(nn.Module):
                 super().__init__()
                 self.d_k = d_model // nhead
                 self.nhead = nhead
+                self.scaling = self.d_k ** -0.5  # Pre-compute scaling factor
                 self.query = nn.Linear(d_model, d_model)
                 self.key = nn.Linear(d_model, d_model)
                 self.value = nn.Linear(d_model, d_model)
@@ -57,8 +59,8 @@ class CPUOptimizedTransformer(nn.Module):
                 k = self.key(x).view(batch_size, -1, self.nhead, self.d_k).transpose(1, 2)
                 v = self.value(x).view(batch_size, -1, self.nhead, self.d_k).transpose(1, 2)
                 
-                # Attention scores
-                scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(self.d_k)
+                # Scaled dot-product attention
+                scores = torch.matmul(q, k.transpose(-2, -1)) * self.scaling
                 attn = F.softmax(scores, dim=-1)
                 
                 # Apply attention to values
@@ -102,10 +104,14 @@ class CPUOptimizedTransformer(nn.Module):
     
     def quantize_model(self):
         """Implement basic quantization for CPU"""
-        self.qconfig = torch.quantization.get_default_qconfig('fbgemm')
-        torch.quantization.prepare(self, inplace=True)
+        # Ensure model is in training mode before preparing
+        self.train()
         
-        # Calibrate
+        # Basic quantization config
+        self.qconfig = torch.quantization.get_default_qconfig('fbgemm')
+        
+        # Prepare and calibrate
+        torch.quantization.prepare(self, inplace=True)
         self._run_calibration(num_batches=10)
         
         # Convert to quantized model
