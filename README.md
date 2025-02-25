@@ -40,8 +40,8 @@ A sophisticated transformer-based model for code generation, understanding, and 
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/ai-code-model.git
-cd ai-code-model
+git clone https://github.com/Kanopusdev/Polris.git
+cd Polris
 ```
 
 2. Create a virtual environment:
@@ -173,7 +173,7 @@ ai-code-model/
 
 ## 📝 License
 
-This project is licensed under the Canopus Development Software License Agreement - see the LICENSE file for details.
+This project is licensed under the Kanopus Development Software License Agreement - see the LICENSE file for details.
 
 ## ⚠️ Important Notes
 

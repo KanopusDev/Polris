@@ -10,7 +10,7 @@ Effective Date: 28/11/2024
 
 1.2 "Licensee" refers to any individual or legal entity that uses the Software.
 
-1.3 "Licensor" refers to Canopus Development.
+1.3 "Licensor" refers to Kanopus Development.
 
 ---
 
@@ -24,7 +24,7 @@ Effective Date: 28/11/2024
 
 **3. Conditions**
 
-3.1 **Attribution**: The Licensee must retain, in the source code of any derivative works, an appropriate acknowledgment to Canopus Development, including a link to [https://github.com/Canopus-Development](https://github.com/Canopus-Development).
+3.1 **Attribution**: The Licensee must retain, in the source code of any derivative works, an appropriate acknowledgment to Kanopus Development, including a link to [https://github.com/Kanopusdev](https://github.com/Kanopusdev).
 
 3.2 **Notice**: All copies or substantial portions of the Software must include this License Agreement.
 
@@ -82,7 +82,7 @@ Effective Date: 28/11/2024
 
 **11. Updates to the License**
 
-11.1 Canopus Development reserves the right to modify this License Agreement at any time. Updated versions will be made available at [https://github.com/Canopus-Development](https://github.com/Canopus-Development).
+11.1 Kanopus Development reserves the right to modify this License Agreement at any time. Updated versions will be made available at [https://github.com/Kanopusdev](https://github.com/Kanopusdev).
 
 ---
 
